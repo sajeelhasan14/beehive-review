@@ -1,4 +1,6 @@
+import { after } from 'next/server';
 import { db } from '@/lib/db';
+import { syncSubmission } from '@/lib/sheets';
 
 // POST /api/public/submit  <- every funnel page sends its form here.
 // Public URL, so nothing in the body is trusted until checked below.
@@ -45,27 +47,32 @@ export async function POST(request: Request) {
   if (!slug || !rating || !path) return fail(400, 'slug, rating and path are required');
   if (path === 'happy' && phone.length !== 10) return fail(400, 'A 10 digit phone number is required');
 
+  const submission = {
+    rating,
+    path,
+    first_name: text(body.first_name, 60),
+    last_name: text(body.last_name, 60),
+    phone: phone || null,
+    email: email && email.includes('@') ? email : null,
+    birthday_month: whole(body.birthday_month, 1, 12),
+    birthday_day: whole(body.birthday_day, 1, 31),
+    sms_consent: body.sms_consent === true,
+    feedback_text: text(body.feedback_text, 1000),
+  };
+
   try {
     // $1..$11 are filled from the array below. pg sends them separately from the SQL,
     // so nothing a customer types can change the query (no SQL injection).
+    const s = submission;
     const { rows } = await db().query<{ result: { returning_visitor: boolean; first_name: string | null } }>(
       `select public.record_submission($1, $2::smallint, $3, $4, $5, $6, $7, $8::smallint, $9::smallint, $10, $11) as result`,
-      [
-        slug,
-        rating,
-        path,
-        text(body.first_name, 60),
-        text(body.last_name, 60),
-        phone || null,
-        email && email.includes('@') ? email : null,
-        whole(body.birthday_month, 1, 12),
-        whole(body.birthday_day, 1, 31),
-        body.sms_consent === true,
-        text(body.feedback_text, 1000),
-      ],
+      [slug, s.rating, s.path, s.first_name, s.last_name, s.phone, s.email, s.birthday_month, s.birthday_day, s.sms_consent, s.feedback_text],
     );
+    const result = rows[0].result;
+    // Copy the row to the client's Google Sheet once the customer already has their answer.
+    after(() => syncSubmission(slug, { ...submission, returning_visitor: result.returning_visitor }));
     // result = { returning_visitor, first_name } from the database function.
-    return Response.json({ ok: true, path, ...rows[0].result });
+    return Response.json({ ok: true, path, ...result });
   } catch (err) {
     if ((err as { code?: string }).code === 'P0002') return fail(404, 'Funnel not found');
     console.error('record_submission failed:', err);

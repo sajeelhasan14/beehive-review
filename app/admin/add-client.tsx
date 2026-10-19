@@ -1,7 +1,7 @@
 'use client';
 
 import { useActionState, useState, useTransition } from 'react';
-import { createClient, publishFunnel } from './actions';
+import { createClient, publishFunnel, smartFillWithAi } from './actions';
 import { PasswordOnce } from './add-login';
 
 // "+ Add client" from the demo's factory: describe -> fill -> save as draft -> preview -> publish.
@@ -23,7 +23,7 @@ const EMPTY = {
 type Fields = typeof EMPTY;
 
 // The demo's smartFill(): pulls the obvious pieces out of one sentence, instantly, in the browser.
-// (An AI version can replace this later; the form doesn't change.)
+// Used when the AI fill isn't available (no ANTHROPIC_API_KEY on the server, or it failed).
 function smartFill(text: string): Partial<Fields> {
   const t = text.replace(/^EXAMPLE:\s*/i, '');
   const found: Partial<Fields> = {
@@ -35,6 +35,18 @@ function smartFill(text: string): Partial<Fields> {
     vertical: /dent|dds|orthodont|smile/i.test(t) ? 'dental' : 'hospitality',
   };
   return Object.fromEntries(Object.entries(found).filter(([, v]) => v));
+}
+
+// AI answers go through the same checks as typed input: anything that doesn't look right is left blank.
+function keepValid(ai: Partial<Fields>): Partial<Fields> {
+  const ok: Partial<Fields> = {
+    ...ai,
+    review_link: /^https?:\/\/\S+$/.test(ai.review_link ?? '') ? ai.review_link : '',
+    owner_email: /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(ai.owner_email ?? '') ? ai.owner_email : '',
+    brand_color: /^#[0-9a-f]{6}$/i.test(ai.brand_color ?? '') ? ai.brand_color : '',
+    avg_ticket: /^\d{1,6}$/.test(ai.avg_ticket ?? '') ? ai.avg_ticket : '',
+  };
+  return Object.fromEntries(Object.entries(ok).filter(([k, v]) => v && k in EMPTY));
 }
 
 const input = 'w-full rounded-lg border bg-surface px-2.5 py-2 text-text placeholder:text-dim';
@@ -65,16 +77,21 @@ function Factory({ onClose, onAnother }: { onClose: () => void; onAnother: () =>
   const [note, setNote] = useState('');
   const [published, setPublished] = useState(false);
   const [publishing, startPublish] = useTransition();
+  const [filling, startFill] = useTransition();
 
   const set = (key: keyof Fields) => (e: { target: { value: string } }) => setFields((f) => ({ ...f, [key]: e.target.value }));
   const border = (key: string) => (filled.includes(key) ? 'border-ok' : 'border-border');
 
   function fill() {
     if (!smart.trim()) return setNote('Describe the client first, or tap Show me an example.');
-    const found = smartFill(smart);
-    setFields((f) => ({ ...f, ...found }));
-    setFilled(Object.keys(found));
-    setNote('Filled. Green means it was filled for you, you confirm it.');
+    setNote('Reading it…');
+    startFill(async () => {
+      const ai = await smartFillWithAi(smart.replace(/^EXAMPLE:\s*/i, '')).catch(() => null);
+      const found = ai ? keepValid(ai) : smartFill(smart);
+      setFields((f) => ({ ...f, ...found }));
+      setFilled(Object.keys(found));
+      setNote(`Filled${ai ? ' by AI' : ''}. Green means it was filled for you, you confirm it.`);
+    });
   }
 
   // Saved: show the draft funnel in a phone frame, then Publish.
@@ -143,7 +160,9 @@ function Factory({ onClose, onAnother }: { onClose: () => void; onAnother: () =>
         <button type="button" className={button} onClick={() => { setSmart(EXAMPLE); setNote('Sample client. Edit it or replace it, then tap Fill.'); }}>
           Show me an example
         </button>
-        <button type="button" className={button} onClick={fill}>Fill the form from this</button>
+        <button type="button" className={button} onClick={fill} disabled={filling}>
+          {filling ? 'Filling…' : 'Fill the form from this'}
+        </button>
         <span className="text-[13px] text-ok">{note}</span>
       </div>
 

@@ -1,36 +1,44 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Beehive Reviews
 
-## Getting Started
+QR review funnels, a multi-tenant admin and per-client dashboards for EMRG Media.
+Next.js 16 (App Router, Cache Components) on Railway Postgres. Mario's `beehive-multitenant-demo.html` is the spec.
 
-First, run the development server:
+## What's where
+
+| URL | What |
+|---|---|
+| `/c/{funnel-slug}` | Public funnel (the QR code target). Happy → review link, unhappy → private feedback. |
+| `/api/public/submit` | Funnel form posts here. Saves contact + rating; copies the row to the client's Google Sheet. |
+| `/login` | Email + password for admins and client owners. |
+| `/admin` | Master admin: client cards, add client (smart fill), tier/dashboard switches, publish, copy package, CSV, print kit, unhappy alerts, all contacts. |
+| `/admin/kit/{client}/qr.png` · `table-tent.pdf` · `stickers.pdf` | Print kit, generated on request. |
+| `/d/{client-slug}` | Client dashboard: money view, automations by tier, rating breakdown, birthday engine (hospitality) or recall list (dental), alerts, guest list. Tier 1 / dashboard off shows the upgrade wall. |
+| `/d/{client-slug}/contacts.csv` | That client's contacts only. |
+| `/api/health` | 200 when Postgres is reachable (Railway health check). |
+
+Tenant isolation lives in `lib/auth/dal.ts`: every dashboard read goes through `requireClientAccess()`; a client login can only ever load its own `client_id`.
+
+## Run locally
 
 ```bash
+cp .env.example .env.local   # paste DATABASE_URL (Railway Postgres → DATABASE_PUBLIC_URL)
+npm install
+npm run db:migrate           # creates/updates tables
+npm run db:seed              # Mario's 5 clients (safe to run twice)
+npm run user:create -- --role admin --email you@emrgmedia.com --name "Your Name"
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+## Deploy (Railway)
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+`railway.json` runs `npm run db:migrate` before each deploy, starts with `npm start` and health checks `/api/health`.
+Service variables: `DATABASE_URL=${{Postgres.DATABASE_URL}}`, plus any of the optional keys in `.env.example`.
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+## Optional features
 
-## Learn More
+- **AI smart fill**: set `ANTHROPIC_API_KEY`. Without it the form uses the instant pattern fill.
+- **Google Sheets**: set `GOOGLE_SERVICE_ACCOUNT_JSON` (+ `GOOGLE_DRIVE_FOLDER_ID`, `GOOGLE_SHEETS_SHARE_WITH`). A sheet is created when a client is added (or on the first submission for older clients); every submission is appended. Failures show as "sync error" with Retry on the client card and never block a customer.
 
-To learn more about Next.js, take a look at the following resources:
+## Not in Phase 1
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
-
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
-
-## Deploy on Vercel
-
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+Texting (Twilio), the cron worker (alerts, birthdays, win back), monthly report card emails and 5-minute health checks are Phase 2.

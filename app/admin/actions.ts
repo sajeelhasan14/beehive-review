@@ -1,9 +1,12 @@
 'use server';
 
 import { refresh } from 'next/cache';
+import { after } from 'next/server';
 import { db } from '@/lib/db';
 import { requireAdmin } from '@/lib/auth/dal';
 import { createLogin } from '@/lib/auth/users';
+import { aiSmartFill, type SmartFields } from '@/lib/ai/smart-fill';
+import { ensureClientSheet } from '@/lib/sheets';
 
 // Server Actions are public endpoints under the hood: always re-check admin and validate input.
 
@@ -39,7 +42,10 @@ function isUniqueViolation(err: unknown): err is { code: string; constraint?: st
 export async function setTier(clientId: string, tier: number): Promise<void> {
   await requireAdmin();
   if (!UUID.test(clientId) || ![1, 2, 3].includes(tier)) throw new Error('Invalid tier change');
-  await db().query('update clients set tier = $2, dashboard_enabled = $3 where id = $1', [clientId, tier, tier >= 2]);
+  await db().query(
+    'update clients set tier = $2, dashboard_enabled = $3, upgrade_requested_at = null where id = $1',
+    [clientId, tier, tier >= 2],
+  );
   refresh();
 }
 
@@ -47,7 +53,12 @@ export async function setTier(clientId: string, tier: number): Promise<void> {
 export async function setDashboard(clientId: string, enabled: boolean): Promise<void> {
   await requireAdmin();
   if (!UUID.test(clientId) || typeof enabled !== 'boolean') throw new Error('Invalid dashboard change');
-  await db().query('update clients set dashboard_enabled = $2 where id = $1', [clientId, enabled]);
+  await db().query(
+    `update clients set dashboard_enabled = $2,
+            upgrade_requested_at = case when $2 then null else upgrade_requested_at end
+      where id = $1`,
+    [clientId, enabled],
+  );
   refresh();
 }
 
@@ -132,6 +143,8 @@ export async function createClient(_previous: CreateClientState, formData: FormD
       : null;
     await tx.query('commit');
 
+    // The client's Google Sheet is made after the response (it talks to Google, a few seconds).
+    after(() => ensureClientSheet(client.id));
     refresh();
     return {
       created: {
@@ -185,4 +198,30 @@ export async function createClientLogin(clientId: string, _previous: AddLoginSta
     if (isUniqueViolation(err)) return { error: `A login for ${email} already exists.` };
     throw err;
   }
+}
+
+// ---------- AI smart fill ----------
+
+// null = no AI available (no key, refusal or error): the form falls back to the instant pattern fill.
+export async function smartFillWithAi(description: string): Promise<SmartFields | null> {
+  await requireAdmin();
+  const text = String(description ?? '').trim().slice(0, 2000);
+  if (!text) return null;
+  try {
+    return await aiSmartFill(text);
+  } catch (err) {
+    console.error('AI smart fill failed:', err);
+    return null;
+  }
+}
+
+// ---------- Google Sheet ----------
+
+// "Retry sheet" on a client card: creates the sheet if the first try failed.
+export async function retrySheet(clientId: string): Promise<void> {
+  await requireAdmin();
+  if (!UUID.test(clientId)) throw new Error('Invalid client');
+  await db().query('update clients set sheet_error = null where id = $1', [clientId]);
+  await ensureClientSheet(clientId);
+  refresh();
 }
