@@ -6,7 +6,7 @@ import { baseUrl } from '@/lib/base-url';
 import { sheetsEnabled } from '@/lib/sheets';
 import { AppHeader } from '@/app/ui/app-header';
 import { resolveAlert } from '@/app/d/[slug]/actions';
-import { AddClient } from './add-client';
+import { AddClient, AddClientProvider, AddClientSlot } from './add-client';
 import { ClientCard } from './client-card';
 
 // Master admin (Mario / EMRG ops). The page shell loads instantly; the part that
@@ -22,7 +22,7 @@ export default function AdminPage({ searchParams }: { searchParams: Promise<{ ve
 }
 
 const FILTERS: { label: string; value: Vertical | null }[] = [
-  { label: 'All verticals', value: null },
+  { label: 'All clients', value: null },
   { label: 'Hospitality', value: 'hospitality' },
   { label: 'Dental', value: 'dental' },
 ];
@@ -44,132 +44,157 @@ async function AdminHome({ searchParams }: { searchParams: Promise<{ vertical?: 
 
   return (
     <>
-      <AppHeader title="Beehive Reviews" subtitle="Master admin, EMRG Media" userName={user.name} />
+      <AppHeader
+        title="All clients"
+        subtitle="Funnels, logins and unhappy customers for every Beehive account."
+        userName={user.name}
+      />
 
-      <section className="mb-[18px] rounded-xl border border-border bg-surface p-5">
-        <div className="mb-4 flex flex-wrap items-center justify-between gap-2.5">
-          <h2 className="text-[15px] font-semibold">
-            Clients<span className="ml-2 text-[13px] font-normal text-dim">{stats.clients}</span>
-          </h2>
-          <nav className="flex gap-1.5">
-            {FILTERS.map((f) => (
-              <a
-                key={f.label}
-                href={f.value ? `/admin?vertical=${f.value}` : '/admin'}
-                className={`rounded-lg border px-2.5 py-1.5 text-xs ${
-                  f.value === vertical ? 'border-text bg-text font-semibold text-bg' : 'border-border bg-surface2 text-text'
-                }`}
-              >
-                {f.label}
-              </a>
-            ))}
-          </nav>
-        </div>
+      <section className="mb-10 grid grid-cols-2 overflow-hidden rounded-2xl border border-border bg-surface sm:grid-cols-3 lg:grid-cols-6">
+        <Figure label="Clients" value={stats.clients} />
+        <Figure label="Contacts captured" value={stats.contacts} />
+        <Figure label="Sent to Google" value={stats.happy} />
+        <Figure label="Happy" value={happyPct} />
+        <Figure label="Average rating" value={stats.avg_rating ?? '—'} />
+        <Figure label="Unhappy caught" value={stats.unhappy} alert={alerts.length > 0} />
+      </section>
 
-        <AddClient />
-
-        {clients.length ? (
-          <div className="grid grid-cols-1 gap-3.5 md:grid-cols-[repeat(auto-fill,minmax(330px,1fr))]">
-            {clients.map((c) => (
-              <ClientCard key={c.id} client={c} baseUrl={base} sheets={sheets} />
-            ))}
+      <AddClientProvider>
+        <section className="mb-10">
+          <div className="mb-5 flex flex-wrap items-end justify-between gap-4 border-b border-border">
+            <nav className="-mb-px flex gap-6" aria-label="Filter by vertical">
+              {FILTERS.map((f) => (
+                <a
+                  key={f.label}
+                  href={f.value ? `/admin?vertical=${f.value}` : '/admin'}
+                  aria-current={f.value === vertical ? 'page' : undefined}
+                  className={`border-b-2 pb-3 text-[13px] ${
+                    f.value === vertical ? 'border-brand font-semibold text-text' : 'border-transparent text-dim hover:text-text'
+                  }`}
+                >
+                  {f.label}
+                </a>
+              ))}
+            </nav>
+            <div className="pb-2.5">
+              <AddClient />
+            </div>
           </div>
-        ) : (
-          <p className="py-[18px] text-center text-dim">No clients in this vertical yet.</p>
-        )}
-      </section>
 
-      <section className="grid grid-cols-3 gap-3 lg:grid-cols-6">
-        <Stat label="Contacts" value={stats.contacts} />
-        <Stat label="Avg rating" value={stats.avg_rating ?? '—'} />
-        <Stat label="Happy %" value={happyPct} />
-        <Stat label="Sent to review" value={stats.happy} />
-        <Stat label="Unhappy" value={stats.unhappy} />
-        <Stat label="Clients" value={stats.clients} />
-      </section>
+          <AddClientSlot />
 
-      <Panel title="Unhappy alerts" badge={alerts.length} open={alerts.length > 0}>
+          {clients.length ? (
+            <div className="grid grid-cols-1 gap-4 md:grid-cols-[repeat(auto-fill,minmax(340px,1fr))]">
+              {clients.map((c) => (
+                <ClientCard key={c.id} client={c} baseUrl={base} sheets={sheets} />
+              ))}
+            </div>
+          ) : (
+            <p className="rounded-2xl border border-dashed border-border py-10 text-center text-dim">
+              No clients in this vertical yet. Use Add client to set one up.
+            </p>
+          )}
+        </section>
+      </AddClientProvider>
+
+      <Panel title="Unhappy customers to follow up" count={alerts.length} open={alerts.length > 0}>
         {alerts.length ? (
-          <div className="grid gap-2.5">
+          <ul className="divide-y divide-border">
             {alerts.map((a) => (
-              <div key={a.id} className="flex flex-wrap items-start justify-between gap-3 rounded-lg border border-border bg-surface2 p-3">
+              <li key={a.id} className="flex flex-wrap items-start justify-between gap-3 py-3.5 first:pt-1">
                 <div>
-                  <b>{a.first_name || 'Anonymous'}</b> <span className="text-brand">{stars(a.rating)}</span>
-                  <div className="text-xs text-dim">
-                    {a.client_name} · {a.phone || 'no phone'} · {date(a.created_at)}
+                  <span className="font-medium">{a.first_name || 'Anonymous'}</span>{' '}
+                  <span className="ml-1 text-brand" aria-label={`${a.rating} out of 5`}>
+                    {stars(a.rating)}
+                  </span>
+                  <div className="mt-0.5 text-xs text-dim">
+                    {a.client_name}, {phone(a.phone) || 'no phone left'}, {date(a.created_at)}
                   </div>
-                  {a.feedback_text && <p className="mt-1 text-[13px]">“{a.feedback_text}”</p>}
+                  {a.feedback_text && (
+                    <p className="mt-1.5 max-w-[65ch] font-serif text-[14px] leading-relaxed">“{a.feedback_text}”</p>
+                  )}
                 </div>
                 <form action={resolveAlert.bind(null, a.id)}>
-                  <button type="submit" className="rounded-lg border border-border bg-surface px-2.5 py-1.5 text-xs font-medium hover:border-dim">
+                  <button
+                    type="submit"
+                    className="rounded-lg border border-border bg-surface px-3 py-1.5 text-xs font-medium hover:border-dim"
+                  >
                     Mark resolved
                   </button>
                 </form>
-              </div>
+              </li>
             ))}
-          </div>
+          </ul>
         ) : (
-          <p className="py-3 text-center text-dim">Nothing needs follow up.</p>
+          <p className="py-2 text-dim">Nobody is waiting on a call back.</p>
         )}
       </Panel>
 
-      <Panel title="All contacts" badge={null}>
+      <Panel title="Latest contacts" count={null}>
         {contacts.length ? (
           <div className="overflow-x-auto">
             <table className="w-full text-left text-[13px]">
               <thead>
                 <tr>
                   {['Name', 'Phone', 'Rating', 'Visits', 'Client', 'Last seen'].map((h) => (
-                    <th key={h} className="border-b border-border px-2 py-2 text-[11px] font-semibold uppercase tracking-[.06em] text-dim">{h}</th>
+                    <th key={h} className="border-b border-border px-2 pb-2.5 text-xs font-medium text-dim">
+                      {h}
+                    </th>
                   ))}
                 </tr>
               </thead>
               <tbody>
                 {contacts.map((c) => (
                   <tr key={c.id}>
-                    <td className="border-b border-border px-2 py-2">{c.first_name}</td>
-                    <td className="border-b border-border px-2 py-2">{c.phone}</td>
-                    <td className="border-b border-border px-2 py-2 text-brand">{stars(c.last_rating)}</td>
-                    <td className="border-b border-border px-2 py-2">{c.visits}</td>
-                    <td className="border-b border-border px-2 py-2">{c.client_name}</td>
-                    <td className="border-b border-border px-2 py-2">{date(c.last_seen_at)}</td>
+                    <td className="border-b border-border px-2 py-2.5">{c.first_name}</td>
+                    <td className="border-b border-border px-2 py-2.5 tabular-nums">{phone(c.phone)}</td>
+                    <td className="border-b border-border px-2 py-2.5 text-brand">{stars(c.last_rating)}</td>
+                    <td className="border-b border-border px-2 py-2.5 tabular-nums">{c.visits}</td>
+                    <td className="border-b border-border px-2 py-2.5">{c.client_name}</td>
+                    <td className="border-b border-border px-2 py-2.5 tabular-nums">{date(c.last_seen_at)}</td>
                   </tr>
                 ))}
               </tbody>
             </table>
           </div>
         ) : (
-          <p className="py-3 text-center text-dim">No contacts yet.</p>
+          <p className="py-2 text-dim">No contacts yet. They appear here as soon as a QR code is scanned.</p>
         )}
       </Panel>
     </>
   );
 }
 
-function Stat({ label, value }: { label: string; value: string | number }) {
+// One cell of the portfolio band: serif figure over a quiet label, hairline between cells.
+function Figure({ label, value, alert }: { label: string; value: string | number; alert?: boolean }) {
   return (
-    <div className="rounded-xl border border-border bg-surface px-4 py-3.5">
-      <div className="text-xs text-dim">{label}</div>
-      <div className="mt-0.5 text-[26px] font-bold text-metric">{value}</div>
+    <div className="-ml-px -mt-px border-l border-t border-border px-5 py-5">
+      <div className={`figure text-[30px] font-bold leading-none ${alert ? 'text-alert' : ''}`}>{value}</div>
+      <div className="mt-2 text-xs text-dim">{label}</div>
     </div>
   );
 }
 
 const stars = (n: number | null) => (n ? '★'.repeat(n) + '☆'.repeat(5 - n) : '');
+const phone = (p: string | null) => (p && p.length === 10 ? `(${p.slice(0, 3)}) ${p.slice(3, 6)}-${p.slice(6)}` : (p ?? ''));
 const date = (d: Date) => d.toLocaleDateString('en-US', { timeZone: 'America/New_York' });
 
 // Fold-open panel (the demo's .panel), no JavaScript needed.
-function Panel({ title, badge, open, children }: { title: string; badge: number | null; open?: boolean; children: ReactNode }) {
+function Panel({ title, count, open, children }: { title: string; count: number | null; open?: boolean; children: ReactNode }) {
   return (
-    <details open={open} className="group mt-3 overflow-hidden rounded-xl border border-border bg-surface">
-      <summary className="flex cursor-pointer select-none list-none items-center justify-between px-5 py-3.5">
-        <h2 className="flex items-center gap-2.5 text-sm font-semibold">
+    <details open={open} className="group mb-4 rounded-2xl border border-border bg-surface">
+      <summary className="flex cursor-pointer select-none list-none items-center justify-between gap-3 rounded-2xl px-6 py-4">
+        <h2 className="flex items-center gap-3 font-serif text-[17px] font-bold">
           {title}
-          {badge ? <span className="rounded-full bg-alert px-2 py-0.5 text-[11px] font-bold text-white">{badge}</span> : null}
+          {count ? (
+            <span className="rounded-full bg-alert px-2 py-0.5 font-sans text-[11px] font-semibold text-white">{count}</span>
+          ) : null}
         </h2>
-        <span className="text-dim transition-transform group-open:rotate-180">▾</span>
+        <svg aria-hidden viewBox="0 0 16 16" className="size-4 text-dim transition-transform group-open:rotate-180">
+          <path d="M4 6l4 4 4-4" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+        </svg>
       </summary>
-      <div className="border-t border-border px-5 pb-5 pt-3">{children}</div>
+      <div className="px-6 pb-5">{children}</div>
     </details>
   );
 }

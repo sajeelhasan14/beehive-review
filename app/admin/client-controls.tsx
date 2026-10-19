@@ -9,14 +9,14 @@ export function ClientControls({ clientId, tier, dashboard }: { clientId: string
   const [pending, startTransition] = useTransition();
 
   return (
-    <div className={`mt-3 flex flex-wrap items-center gap-2.5 text-xs text-dim ${pending ? 'opacity-60' : ''}`}>
+    <div className={`flex flex-wrap items-center gap-3 text-xs text-dim ${pending ? 'opacity-60' : ''}`}>
       <label className="flex items-center gap-1.5">
         Tier
         <select
           value={tier}
           disabled={pending}
           onChange={(e) => startTransition(() => setTier(clientId, Number(e.target.value)))}
-          className="rounded-md border border-border bg-surface px-2 py-1 text-xs text-text"
+          className="rounded-lg border border-border bg-surface px-2 py-1.5 text-xs text-text"
         >
           <option value={1}>1 Capture</option>
           <option value={2}>2 Command</option>

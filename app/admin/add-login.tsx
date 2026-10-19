@@ -3,7 +3,7 @@
 import { useActionState, useState } from 'react';
 import { createClientLogin, type NewLoginResult } from './actions';
 
-const input = 'w-full rounded-lg border border-border bg-surface px-2.5 py-2 text-xs text-text placeholder:text-dim';
+const input = 'w-full rounded-lg border border-border bg-surface px-2.5 py-2 text-xs text-text placeholder:text-dim focus:border-text';
 const button = 'rounded-lg border border-border bg-surface px-2.5 py-1.5 text-xs font-medium hover:border-dim';
 
 // "+ Add login" on a client card: creates a login for this client and shows the password once.
@@ -42,7 +42,7 @@ export function AddLogin({ clientId }: { clientId: string }) {
 export function PasswordOnce({ login }: { login: NewLoginResult }) {
   const [copied, setCopied] = useState(false);
   return (
-    <div className="mt-2 rounded-lg border border-ok bg-surface p-3 text-xs">
+    <div className="mt-2 rounded-xl border border-ok/50 bg-surface p-3.5 text-xs">
       <p className="font-semibold text-ok">Login created. Copy the password now, it is shown once.</p>
       <p className="mt-1.5 text-dim">
         Email: <span className="text-text">{login.email}</span>

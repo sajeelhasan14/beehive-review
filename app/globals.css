@@ -1,26 +1,50 @@
 @import "tailwindcss";
 
-/* Mario's demo palette (beehive-multitenant-demo.html :root) as Tailwind colors:
-   bg-bg, bg-surface, bg-surface2, border-border, text-text, text-dim, text-metric, ... */
+/* EMRG Media house style (from emrg-media.html :root): ivory page, white paper, ink, stone, hairline.
+   Gold is the single accent; red / green / amber are signals only, never decoration. */
 @theme {
-  --color-bg: #111214;
-  --color-surface: #17181b;
-  --color-surface2: #1d1f23;
-  --color-border: #2a2c31;
-  --color-text: #f2f2f0;
-  --color-dim: #8e9096;
-  --color-metric: #5ca8ff;
-  --color-alert: #ff5252;
-  --color-ok: #3dbc6c;
-  --color-warn: #e0a93e;
-  --color-brand: #e8b54d;
+  --color-bg: #faf9f5;       /* ivory page */
+  --color-surface: #ffffff;  /* paper: cards, panels */
+  --color-surface2: #f5f3ed; /* sunk areas: inputs, nested rows */
+  --color-border: #e4e0d6;   /* hairline */
+  --color-text: #1b1a17;     /* ink */
+  --color-dim: #6e6a61;      /* stone */
+  --color-metric: #1b1a17;   /* figures are ink, set in the serif */
+  --color-alert: #b83a3a;
+  --color-ok: #3b7a55;
+  --color-warn: #9a6b1f;
+  --color-brand: #b38b4d;    /* EMRG gold */
 }
 
 @theme inline {
   --font-sans: var(--font-inter), sans-serif;
+  --font-serif: var(--font-baskerville), Georgia, serif;
 }
 
 body {
   background: var(--color-bg);
   color: var(--color-text);
+}
+
+::selection {
+  background: #ead9bd;
+}
+
+/* One focus style everywhere: an ink ring, visible on ivory and white. */
+:where(a, button, input, select, textarea, summary):focus-visible {
+  outline: 2px solid var(--color-text);
+  outline-offset: 2px;
+}
+
+input,
+select,
+textarea {
+  accent-color: var(--color-text);
+}
+
+/* Figures line up in tables and stat rows. */
+.figure {
+  font-family: var(--font-serif);
+  font-variant-numeric: lining-nums tabular-nums;
+  letter-spacing: -0.01em;
 }
