@@ -20,16 +20,26 @@ interface FunnelRow {
   review_link: string;
 }
 
-// Returns the funnel ready for renderFunnel(), or null if it doesn't exist or is paused.
-export async function getLiveFunnel(slug: string): Promise<FunnelView | null> {
+// Public funnel (/c/...): only live funnels of active clients. Null otherwise.
+export function getLiveFunnel(slug: string): Promise<FunnelView | null> {
+  return getFunnel(slug, true);
+}
+
+// Admin preview (/admin/preview/...): any status, so drafts can be checked before Publish.
+export function getFunnelForPreview(slug: string): Promise<FunnelView | null> {
+  return getFunnel(slug, false);
+}
+
+// Returns the funnel ready for renderFunnel(), or null if not found.
+async function getFunnel(slug: string, liveOnly: boolean): Promise<FunnelView | null> {
   const { rows } = await db().query<FunnelRow>(
     `select f.slug, f.template, f.font_pairing, f.brand_accent, f.logo_url, f.rating_question,
             f.unhappy_message, f.copy_slots, f.birthday_active, f.okay_routes_happy,
             c.name as client_name, c.vertical, c.brand_color, c.review_link
        from funnels f
        join clients c on c.id = f.client_id
-      where f.slug = $1 and f.status = 'live' and c.status = 'active'`,
-    [slug],
+      where f.slug = $1 and (not $2::boolean or (f.status = 'live' and c.status = 'active'))`,
+    [slug, liveOnly],
   );
   const row = rows[0];
   if (!row) return null;

@@ -1,0 +1,188 @@
+'use server';
+
+import { refresh } from 'next/cache';
+import { db } from '@/lib/db';
+import { requireAdmin } from '@/lib/auth/dal';
+import { createLogin } from '@/lib/auth/users';
+
+// Server Actions are public endpoints under the hood: always re-check admin and validate input.
+
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+// Trimmed form field cut to max length. Empty -> null.
+function field(formData: FormData, name: string, max: number): string | null {
+  const value = String(formData.get(name) ?? '').trim().slice(0, max);
+  return value || null;
+}
+
+// "Figlia & Sons" -> "figlia-sons" (same as the demo's kebab()).
+function toSlug(name: string): string {
+  return name.toLowerCase().trim().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 60);
+}
+
+function isHttpUrl(value: string): boolean {
+  try {
+    return ['http:', 'https:'].includes(new URL(value).protocol);
+  } catch {
+    return false;
+  }
+}
+
+function isUniqueViolation(err: unknown): err is { code: string; constraint?: string } {
+  return (err as { code?: string }).code === '23505';
+}
+
+// ---------- Tier and dashboard switches (Part 5a) ----------
+
+// Same rule as the demo: Tier 1 has no dashboard, Tier 2 and 3 include it.
+export async function setTier(clientId: string, tier: number): Promise<void> {
+  await requireAdmin();
+  if (!UUID.test(clientId) || ![1, 2, 3].includes(tier)) throw new Error('Invalid tier change');
+  await db().query('update clients set tier = $2, dashboard_enabled = $3 where id = $1', [clientId, tier, tier >= 2]);
+  refresh();
+}
+
+// The upsell switch: turn a client's dashboard on or off without changing tier.
+export async function setDashboard(clientId: string, enabled: boolean): Promise<void> {
+  await requireAdmin();
+  if (!UUID.test(clientId) || typeof enabled !== 'boolean') throw new Error('Invalid dashboard change');
+  await db().query('update clients set dashboard_enabled = $2 where id = $1', [clientId, enabled]);
+  refresh();
+}
+
+// ---------- Add client (Part 5b) ----------
+
+// Funnel look and wording per vertical, from the demo's funnelObj().
+const VERTICAL_DEFAULTS = {
+  hospitality: {
+    ticket: 60,
+    template: 'midnight',
+    font: 'classic',
+    accent: '#1A1815',
+    question: 'How was your visit?',
+    unhappy: null,
+    slots: {},
+  },
+  dental: {
+    ticket: 400,
+    template: 'ivory',
+    font: 'editorial',
+    accent: '#1B4965',
+    question: 'How was your visit today?',
+    unhappy: 'Thank you for sharing. Our office manager will follow up with you personally.',
+    slots: {
+      club_headline: 'Join our patient perks list',
+      club_sub: 'Leave your info for reminders, offers, and a birthday surprise.',
+      reassure: 'Your comfort is everything to us. Every review is read by the doctor and the team.',
+    },
+  },
+} as const;
+
+export type NewLoginResult = { email: string; password: string };
+
+export type CreateClientState =
+  | { error: string }
+  | { created: { name: string; funnelId: string; funnelSlug: string; login: NewLoginResult | null } }
+  | undefined;
+
+export async function createClient(_previous: CreateClientState, formData: FormData): Promise<CreateClientState> {
+  await requireAdmin();
+
+  const name = field(formData, 'name', 80);
+  const vertical = formData.get('vertical') === 'dental' ? 'dental' : 'hospitality';
+  const reviewLink = field(formData, 'review_link', 500);
+  const tier = Number(formData.get('tier'));
+  const ticketText = field(formData, 'avg_ticket', 10);
+  const color = field(formData, 'brand_color', 7) ?? '#E8B54D';
+  const question = field(formData, 'rating_question', 140);
+  const ownerName = field(formData, 'owner_name', 80);
+  const ownerEmail = field(formData, 'owner_email', 200)?.toLowerCase() ?? null;
+
+  const defaults = VERTICAL_DEFAULTS[vertical];
+  const slug = name ? toSlug(name) : '';
+  const avgTicket = ticketText ? Number(ticketText) : defaults.ticket;
+
+  if (!name || !slug) return { error: 'Business name is required.' };
+  if (!reviewLink || !isHttpUrl(reviewLink)) return { error: 'Paste the client review link. It must start with https://' };
+  if (![1, 2, 3].includes(tier)) return { error: 'Pick a tier.' };
+  if (!Number.isFinite(avgTicket) || avgTicket < 0 || avgTicket > 100000) return { error: 'Average ticket must be a number.' };
+  if (!/^#[0-9a-f]{6}$/i.test(color)) return { error: 'Brand color must look like #E8B54D.' };
+  if (ownerEmail && !EMAIL.test(ownerEmail)) return { error: 'Owner email doesn’t look right.' };
+  if (ownerEmail && !ownerName) return { error: 'Add the owner’s name for their login.' };
+
+  // One transaction: client + draft funnel + login all save, or none do.
+  const tx = await db().connect();
+  try {
+    await tx.query('begin');
+    const { rows: [client] } = await tx.query<{ id: string }>(
+      `insert into clients (slug, name, vertical, tier, dashboard_enabled, avg_ticket, brand_color, review_link)
+       values ($1, $2, $3, $4, $5, $6, $7, $8) returning id`,
+      [slug, name, vertical, tier, tier >= 2, avgTicket, color, reviewLink],
+    );
+    const funnelSlug = `${slug}-review`;
+    const { rows: [funnel] } = await tx.query<{ id: string }>(
+      `insert into funnels (client_id, slug, template, font_pairing, brand_accent, rating_question, unhappy_message, copy_slots, status)
+       values ($1, $2, $3, $4, $5, $6, $7, $8, 'draft') returning id`,
+      [client.id, funnelSlug, defaults.template, defaults.font, defaults.accent, question ?? defaults.question,
+       defaults.unhappy, JSON.stringify(defaults.slots)],
+    );
+    const password = ownerEmail && ownerName
+      ? await createLogin(tx, { email: ownerEmail, name: ownerName, role: 'client', clientId: client.id })
+      : null;
+    await tx.query('commit');
+
+    refresh();
+    return {
+      created: {
+        name,
+        funnelId: funnel.id,
+        funnelSlug,
+        login: ownerEmail && password ? { email: ownerEmail, password } : null,
+      },
+    };
+  } catch (err) {
+    await tx.query('rollback');
+    if (isUniqueViolation(err)) {
+      return {
+        error: err.constraint === 'users_email_key'
+          ? `A login for ${ownerEmail} already exists.`
+          : `A client called "${name}" already exists.`,
+      };
+    }
+    throw err;
+  } finally {
+    tx.release();
+  }
+}
+
+// Draft (or paused) funnel -> live at /c/{slug}.
+export async function publishFunnel(funnelId: string): Promise<void> {
+  await requireAdmin();
+  if (!UUID.test(funnelId)) throw new Error('Invalid funnel');
+  await db().query(`update funnels set status = 'live' where id = $1`, [funnelId]);
+  refresh();
+}
+
+// ---------- Add a login to an existing client ----------
+
+export type AddLoginState = { error: string } | { login: NewLoginResult } | undefined;
+
+export async function createClientLogin(clientId: string, _previous: AddLoginState, formData: FormData): Promise<AddLoginState> {
+  await requireAdmin();
+  const name = field(formData, 'name', 80);
+  const email = field(formData, 'email', 200)?.toLowerCase() ?? null;
+
+  if (!UUID.test(clientId)) return { error: 'Unknown client.' };
+  if (!name) return { error: 'Add their name.' };
+  if (!email || !EMAIL.test(email)) return { error: 'Add a valid email.' };
+
+  try {
+    const password = await createLogin(db(), { email, name, role: 'client', clientId });
+    refresh();
+    return { login: { email, password } };
+  } catch (err) {
+    if (isUniqueViolation(err)) return { error: `A login for ${email} already exists.` };
+    throw err;
+  }
+}
