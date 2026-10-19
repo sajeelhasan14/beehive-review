@@ -1,26 +1,26 @@
 @import "tailwindcss";
 
-:root {
-  --background: #ffffff;
-  --foreground: #171717;
+/* Mario's demo palette (beehive-multitenant-demo.html :root) as Tailwind colors:
+   bg-bg, bg-surface, bg-surface2, border-border, text-text, text-dim, text-metric, ... */
+@theme {
+  --color-bg: #111214;
+  --color-surface: #17181b;
+  --color-surface2: #1d1f23;
+  --color-border: #2a2c31;
+  --color-text: #f2f2f0;
+  --color-dim: #8e9096;
+  --color-metric: #5ca8ff;
+  --color-alert: #ff5252;
+  --color-ok: #3dbc6c;
+  --color-warn: #e0a93e;
+  --color-brand: #e8b54d;
 }
 
 @theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+  --font-sans: var(--font-inter), sans-serif;
 }
 
 body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  background: var(--color-bg);
+  color: var(--color-text);
 }
