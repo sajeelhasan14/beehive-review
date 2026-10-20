@@ -1,7 +1,7 @@
 'use client';
 
-import { useActionState, useState, useTransition } from 'react';
-import { createClient, publishFunnel } from './actions';
+import { createContext, use, useActionState, useState, useTransition, type ReactNode } from 'react';
+import { createClient, publishFunnel, smartFillWithAi } from './actions';
 import { PasswordOnce } from './add-login';
 
 // "+ Add client" from the demo's factory: describe -> fill -> save as draft -> preview -> publish.
@@ -23,7 +23,7 @@ const EMPTY = {
 type Fields = typeof EMPTY;
 
 // The demo's smartFill(): pulls the obvious pieces out of one sentence, instantly, in the browser.
-// (An AI version can replace this later; the form doesn't change.)
+// Used when the AI fill isn't available (no ANTHROPIC_API_KEY on the server, or it failed).
 function smartFill(text: string): Partial<Fields> {
   const t = text.replace(/^EXAMPLE:\s*/i, '');
   const found: Partial<Fields> = {
@@ -37,23 +37,50 @@ function smartFill(text: string): Partial<Fields> {
   return Object.fromEntries(Object.entries(found).filter(([, v]) => v));
 }
 
-const input = 'w-full rounded-lg border bg-surface px-2.5 py-2 text-text placeholder:text-dim';
-const button = 'rounded-lg border border-border bg-surface2 px-3.5 py-2 text-[13px] font-medium hover:border-dim';
+// AI answers go through the same checks as typed input: anything that doesn't look right is left blank.
+function keepValid(ai: Partial<Fields>): Partial<Fields> {
+  const ok: Partial<Fields> = {
+    ...ai,
+    review_link: /^https?:\/\/\S+$/.test(ai.review_link ?? '') ? ai.review_link : '',
+    owner_email: /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(ai.owner_email ?? '') ? ai.owner_email : '',
+    brand_color: /^#[0-9a-f]{6}$/i.test(ai.brand_color ?? '') ? ai.brand_color : '',
+    avg_ticket: /^\d{1,6}$/.test(ai.avg_ticket ?? '') ? ai.avg_ticket : '',
+  };
+  return Object.fromEntries(Object.entries(ok).filter(([k, v]) => v && k in EMPTY));
+}
+
+const input = 'w-full rounded-[10px] border bg-surface px-3 py-2.5 text-[14px] text-text placeholder:text-dim focus:border-text';
+const button = 'rounded-lg border border-border bg-surface px-3.5 py-2 text-[13px] font-medium hover:border-dim';
 const primary = 'rounded-lg border border-text bg-text px-3.5 py-2 text-[13px] font-semibold text-bg disabled:opacity-60';
 
-export function AddClient() {
-  const [open, setOpen] = useState(false);
-  const [round, setRound] = useState(0); // new number = fresh empty form ("Add another")
+// The button sits in the tab row and the form opens below it, so the two share open/closed state.
+const OpenContext = createContext<{ open: boolean; setOpen: (open: boolean) => void } | null>(null);
 
-  if (!open) {
-    return (
-      <div className="mb-4 flex justify-end">
-        <button type="button" onClick={() => setOpen(true)} className={primary}>
-          + Add client
-        </button>
-      </div>
-    );
-  }
+export function AddClientProvider({ children }: { children: ReactNode }) {
+  const [open, setOpen] = useState(false);
+  return <OpenContext value={{ open, setOpen }}>{children}</OpenContext>;
+}
+
+function useOpen() {
+  const ctx = use(OpenContext);
+  if (!ctx) throw new Error('AddClient must be inside AddClientProvider');
+  return ctx;
+}
+
+export function AddClient() {
+  const { open, setOpen } = useOpen();
+  if (open) return null;
+  return (
+    <button type="button" onClick={() => setOpen(true)} className={primary}>
+      Add client
+    </button>
+  );
+}
+
+export function AddClientSlot() {
+  const { open, setOpen } = useOpen();
+  const [round, setRound] = useState(0); // new number = fresh empty form ("Add another")
+  if (!open) return null;
   return <Factory key={round} onClose={() => setOpen(false)} onAnother={() => setRound((r) => r + 1)} />;
 }
 
@@ -65,24 +92,30 @@ function Factory({ onClose, onAnother }: { onClose: () => void; onAnother: () =>
   const [note, setNote] = useState('');
   const [published, setPublished] = useState(false);
   const [publishing, startPublish] = useTransition();
+  const [filling, startFill] = useTransition();
+  const [, startSave] = useTransition();
 
   const set = (key: keyof Fields) => (e: { target: { value: string } }) => setFields((f) => ({ ...f, [key]: e.target.value }));
   const border = (key: string) => (filled.includes(key) ? 'border-ok' : 'border-border');
 
   function fill() {
     if (!smart.trim()) return setNote('Describe the client first, or tap Show me an example.');
-    const found = smartFill(smart);
-    setFields((f) => ({ ...f, ...found }));
-    setFilled(Object.keys(found));
-    setNote('Filled. Green means it was filled for you, you confirm it.');
+    setNote('Reading it…');
+    startFill(async () => {
+      const ai = await smartFillWithAi(smart.replace(/^EXAMPLE:\s*/i, '')).catch(() => null);
+      const found = ai ? keepValid(ai) : smartFill(smart);
+      setFields((f) => ({ ...f, ...found }));
+      setFilled(Object.keys(found));
+      setNote(`Filled${ai ? ' by AI' : ''}. Green means it was filled for you, you confirm it.`);
+    });
   }
 
   // Saved: show the draft funnel in a phone frame, then Publish.
   if (state && 'created' in state) {
     const c = state.created;
     return (
-      <div className="mb-4 rounded-xl border border-dashed border-border bg-surface2 p-5">
-        <h3 className="text-[15px] font-semibold">
+      <div className="mb-8 rounded-2xl border border-border bg-surface p-6 sm:p-7">
+        <h3 className="font-serif text-[22px] font-bold">
           {c.name} {published ? 'is live.' : 'is saved as a draft.'}
         </h3>
         <p className="mb-3 mt-1 text-[13px] text-dim">
@@ -125,29 +158,39 @@ function Factory({ onClose, onAnother }: { onClose: () => void; onAnother: () =>
   }
 
   return (
-    <form action={formAction} className="mb-4 rounded-xl border border-dashed border-border bg-surface2 p-5">
-      <h3 className="mb-2 text-[15px] font-semibold">New client</h3>
+    // Submitted by hand, not with action={...}: React resets a form after its action runs, which would snap
+    // the controlled selects (tier, vertical) back to their first option while state still holds the choice.
+    <form
+      onSubmit={(e) => {
+        e.preventDefault();
+        const data = new FormData(e.currentTarget);
+        startSave(() => formAction(data));
+      }}
+      className="mb-8 rounded-2xl border border-border bg-surface p-6 sm:p-7">
+      <h3 className="mb-3 font-serif text-[22px] font-bold">New client</h3>
       <ol className="mb-3.5 grid gap-1.5 text-sm">
-        <li><b className="text-metric">1.</b> Describe the client, or fill the form yourself.</li>
-        <li><b className="text-metric">2.</b> Paste their review link. That is the only thing that changes per client.</li>
-        <li><b className="text-metric">3.</b> Save and preview, then Publish. Their funnel is live.</li>
+        <li><b className="figure mr-1 font-bold">1.</b> Describe the client, or fill the form yourself.</li>
+        <li><b className="figure mr-1 font-bold">2.</b> Paste their review link. That is the only thing that changes per client.</li>
+        <li><b className="figure mr-1 font-bold">3.</b> Save and preview, then Publish. Their funnel is live.</li>
       </ol>
 
       <textarea
         value={smart}
         onChange={(e) => setSmart(e.target.value)}
         placeholder="Example: Sachar Dental NYC, dentist in Midtown, review link https://..., tier 2, average visit 400, owner dr@sachar.com"
-        className="min-h-[76px] w-full resize-y rounded-[10px] border border-border bg-surface p-3 text-text placeholder:text-dim"
+        className="min-h-[84px] w-full resize-y rounded-xl border border-border bg-surface2 p-3.5 text-[14px] leading-relaxed text-text placeholder:text-dim focus:border-text"
       />
       <div className="mt-2 flex flex-wrap items-center gap-2.5">
         <button type="button" className={button} onClick={() => { setSmart(EXAMPLE); setNote('Sample client. Edit it or replace it, then tap Fill.'); }}>
           Show me an example
         </button>
-        <button type="button" className={button} onClick={fill}>Fill the form from this</button>
+        <button type="button" className={button} onClick={fill} disabled={filling}>
+          {filling ? 'Filling…' : 'Fill the form from this'}
+        </button>
         <span className="text-[13px] text-ok">{note}</span>
       </div>
 
-      <div className="mt-3.5 grid grid-cols-1 gap-3 text-xs font-medium text-dim sm:grid-cols-2">
+      <div className="mt-3.5 grid grid-cols-1 gap-3 text-xs font-medium text-text sm:grid-cols-2">
         <label className="grid gap-1.5">Business name *
           <input name="name" required value={fields.name} onChange={set('name')} placeholder="Business name" className={`${input} ${border('name')}`} />
         </label>

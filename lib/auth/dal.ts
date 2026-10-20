@@ -25,6 +25,7 @@ export interface ClientSummary {
   tier: 1 | 2 | 3;
   dashboard_enabled: boolean;
   brand_color: string;
+  upgrade_requested_at: Date | null;
 }
 
 // Reads the session cookie and returns the user, or null. cache() = one database read per request.
@@ -61,13 +62,25 @@ export async function requireAdmin(): Promise<CurrentUser> {
 // a client user only their own. Anything else is "not found", so nobody learns which slugs exist.
 export async function requireClientAccess(slug: string): Promise<{ user: CurrentUser; client: ClientSummary }> {
   const user = await requireUser();
+  const client = await findClientFor(user, slug);
+  if (!client) notFound();
+  return { user, client };
+}
+
+// Same rule for Route Handlers (CSV download), which answer with a status instead of redirecting.
+export async function getClientAccess(slug: string): Promise<{ user: CurrentUser; client: ClientSummary } | null> {
+  const user = await getCurrentUser();
+  const client = user && (await findClientFor(user, slug));
+  return user && client ? { user, client } : null;
+}
+
+async function findClientFor(user: CurrentUser, slug: string): Promise<ClientSummary | null> {
   const { rows } = await db().query<ClientSummary>(
-    `select id, slug, name, vertical, tier, dashboard_enabled, brand_color
+    `select id, slug, name, vertical, tier, dashboard_enabled, brand_color, upgrade_requested_at
        from clients where slug = $1 and status <> 'cancelled'`,
     [slug],
   );
   const client = rows[0];
-  if (!client) notFound();
-  if (user.role !== 'admin' && user.clientId !== client.id) notFound();
-  return { user, client };
+  if (!client || (user.role !== 'admin' && user.clientId !== client.id)) return null;
+  return client;
 }

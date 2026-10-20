@@ -22,6 +22,31 @@ export interface ClientCard {
   reviews: number;       // happy submissions = customers sent to the review link
   open_alerts: number;   // unhappy submissions not yet resolved
   logins: string | null; // emails of this client's active logins
+  review_link: string;
+  google_sheet_id: string | null;
+  sheet_error: string | null;
+  upgrade_requested_at: Date | null;
+}
+
+export interface OpenAlert {
+  id: string;
+  client_name: string;
+  client_slug: string;
+  first_name: string | null;
+  phone: string | null;
+  rating: number;
+  feedback_text: string | null;
+  created_at: Date;
+}
+
+export interface RecentContact {
+  id: string;
+  first_name: string | null;
+  phone: string;
+  visits: number;
+  last_rating: number | null;
+  client_name: string;
+  last_seen_at: Date;
 }
 
 export interface AdminStats {
@@ -37,6 +62,7 @@ export async function getClientCards(vertical: Vertical | null): Promise<ClientC
   await requireAdmin();
   const { rows } = await db().query<ClientCard>(
     `select c.id, c.slug, c.name, c.vertical, c.tier, c.dashboard_enabled, c.status,
+            c.review_link, c.google_sheet_id, c.sheet_error, c.upgrade_requested_at,
             f.id as funnel_id, f.slug as funnel_slug, f.status as funnel_status,
             (select count(*) from contacts ct where ct.client_id = c.id)::int as contacts,
             (select count(*) from submissions s where s.client_id = c.id and s.path = 'happy')::int as reviews,
@@ -67,4 +93,28 @@ export async function getAdminStats(): Promise<AdminStats> {
        from submissions`,
   );
   return rows[0];
+}
+
+// Unhappy ratings nobody has followed up yet, every client, newest first.
+export async function getOpenAlerts(): Promise<OpenAlert[]> {
+  await requireAdmin();
+  const { rows } = await db().query<OpenAlert>(
+    `select s.id, c.name as client_name, c.slug as client_slug, s.first_name, s.phone, s.rating, s.feedback_text, s.created_at
+       from submissions s join clients c on c.id = s.client_id
+      where s.path = 'unhappy' and s.resolved_at is null and c.status <> 'cancelled'
+      order by s.created_at desc limit 100`,
+  );
+  return rows;
+}
+
+// The 50 most recent contacts across all clients.
+export async function getRecentContacts(): Promise<RecentContact[]> {
+  await requireAdmin();
+  const { rows } = await db().query<RecentContact>(
+    `select ct.id, ct.first_name, ct.phone, ct.visits, ct.last_seen_at, c.name as client_name,
+            (select rating from submissions where contact_id = ct.id order by created_at desc limit 1) as last_rating
+       from contacts ct join clients c on c.id = ct.client_id
+      order by ct.last_seen_at desc limit 50`,
+  );
+  return rows;
 }
