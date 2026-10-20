@@ -68,6 +68,11 @@ export function ClientCard({ client, baseUrl, sheets }: { client: Card; baseUrl:
               </form>
             </>
           )}
+          {client.funnel_slug && (
+            <a href={`/admin/funnel/${client.funnel_slug}`} className={button}>
+              Customize page
+            </a>
+          )}
           <CopyPackage text={packageText(client, baseUrl)} className={button} />
         </div>
 

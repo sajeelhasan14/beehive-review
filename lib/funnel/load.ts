@@ -1,6 +1,6 @@
 import 'server-only';
 import { db } from '@/lib/db';
-import type { CopySlots, FontPairing, FunnelView, Template } from '@/lib/funnel/render';
+import type { CopySlots, FontPairing, FunnelStyle, FunnelView, Template } from '@/lib/funnel/render';
 
 // The columns the query below returns (tables in db/migrations/0001_init.sql).
 interface FunnelRow {
@@ -12,6 +12,7 @@ interface FunnelRow {
   rating_question: string | null;
   unhappy_message: string | null;
   copy_slots: CopySlots;
+  style: Partial<FunnelStyle>;
   birthday_active: boolean;
   okay_routes_happy: boolean;
   client_name: string;
@@ -30,11 +31,24 @@ export function getFunnelForPreview(slug: string): Promise<FunnelView | null> {
   return getFunnel(slug, false);
 }
 
+// Admin page editor (/admin/funnel/...): the funnel plus the ids and status the editor saves against.
+export async function getFunnelForEditor(
+  slug: string,
+): Promise<{ id: string; status: string; client_slug: string; view: FunnelView } | null> {
+  const view = await getFunnel(slug, false);
+  if (!view) return null;
+  const { rows: [row] } = await db().query<{ id: string; status: string; client_slug: string }>(
+    `select f.id, f.status, c.slug as client_slug from funnels f join clients c on c.id = f.client_id where f.slug = $1`,
+    [slug],
+  );
+  return row ? { ...row, view: { ...view, preview: true } } : null;
+}
+
 // Returns the funnel ready for renderFunnel(), or null if not found.
 async function getFunnel(slug: string, liveOnly: boolean): Promise<FunnelView | null> {
   const { rows } = await db().query<FunnelRow>(
     `select f.slug, f.template, f.font_pairing, f.brand_accent, f.logo_url, f.rating_question,
-            f.unhappy_message, f.copy_slots, f.birthday_active, f.okay_routes_happy,
+            f.unhappy_message, f.copy_slots, f.style, f.birthday_active, f.okay_routes_happy,
             c.name as client_name, c.vertical, c.brand_color, c.review_link
        from funnels f
        join clients c on c.id = f.client_id
@@ -59,5 +73,7 @@ async function getFunnel(slug: string, liveOnly: boolean): Promise<FunnelView | 
     rating_question: row.rating_question,
     unhappy_message: row.unhappy_message,
     copy_slots: row.copy_slots ?? {},
+    style: row.style ?? {},
+    preview: !liveOnly,
   };
 }

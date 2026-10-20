@@ -3,7 +3,7 @@ import { getFunnelForPreview } from '@/lib/funnel/load';
 import { renderFunnel } from '@/lib/funnel/render';
 
 // GET /admin/preview/figlia-sons-review -> the funnel even while it's a draft. Admins only.
-// Submissions from a preview aren't saved: the save function only accepts live funnels.
+// A preview sends nothing and never redirects to Google (getFunnelForPreview sets preview: true).
 export async function GET(_request: Request, { params }: { params: Promise<{ slug: string }> }) {
   const user = await getCurrentUser();
   if (user?.role !== 'admin') return new Response('Not found', { status: 404 });

@@ -9,6 +9,7 @@ import { aiSmartFill, type SmartFields } from '@/lib/ai/smart-fill';
 import { ensureClientSheet } from '@/lib/sheets';
 import { readWebsite, type WebsiteLook } from '@/lib/brand/read-website';
 import { searchPlaces, type GooglePlace } from '@/lib/google/places';
+import { FONT_PAIRINGS, THEMES, type CopySlots, type FontPairing, type FunnelStyle, type Template } from '@/lib/funnel/render';
 
 // Server Actions are public endpoints under the hood: always re-check admin and validate input.
 
@@ -190,6 +191,87 @@ export async function publishFunnel(funnelId: string): Promise<void> {
   if (!UUID.test(funnelId)) throw new Error('Invalid funnel');
   await db().query(`update funnels set status = 'live' where id = $1`, [funnelId]);
   refresh();
+}
+
+// ---------- Page editor (/admin/funnel/[slug]) ----------
+
+// Everything the page editor saves in one go.
+export interface FunnelDesign {
+  template: Template;
+  font_pairing: FontPairing;
+  brand_color: string;
+  logo_url: string | null;
+  rating_question: string | null;
+  unhappy_message: string | null;
+  birthday_active: boolean;
+  okay_routes_happy: boolean;
+  copy_slots: CopySlots;
+  style: FunnelStyle;
+}
+
+const COPY_KEYS: (keyof CopySlots)[] = [
+  'rate_sub', 'reassure', 'club_headline', 'club_sub', 'cta', 'thanks', 'unhappy_headline', 'unhappy_sub', 'unhappy_cta',
+];
+
+function pick<T extends string>(value: unknown, allowed: readonly T[], fallback: T): T {
+  return allowed.includes(value as T) ? (value as T) : fallback;
+}
+
+// Trimmed text cut to max, or null when blank (blank = the page uses its default wording).
+function words(value: unknown, max: number): string | null {
+  return typeof value === 'string' && value.trim() ? value.trim().slice(0, max) : null;
+}
+
+export async function saveFunnelDesign(funnelId: string, design: FunnelDesign): Promise<{ error?: string }> {
+  await requireAdmin();
+  if (!UUID.test(funnelId) || !design || typeof design !== 'object') return { error: 'Invalid page.' };
+
+  const color = String(design.brand_color ?? '');
+  const logo = words(design.logo_url, 1000);
+  const cover = words(design.style?.cover_url, 1000);
+  if (!/^#[0-9a-f]{6}$/i.test(color)) return { error: 'Brand color must look like #E8B54D.' };
+  if (logo && !isHttpUrl(logo)) return { error: 'The logo must be a link starting with https://' };
+  if (cover && !isHttpUrl(cover)) return { error: 'The cover photo must be a link starting with https://' };
+
+  const s = design.style ?? {};
+  const style: FunnelStyle = {
+    header: pick(s.header, ['band', 'photo', 'simple'], 'band'),
+    cover_url: cover,
+    logo_shape: pick(s.logo_shape, ['auto', 'circle', 'square', 'wide'], 'auto'),
+    rating_style: pick(s.rating_style, ['faces', 'stars', 'numbers'], 'faces'),
+    corners: pick(s.corners, ['round', 'soft', 'square'], 'round'),
+    background: pick(s.background, ['plain', 'tinted'], 'plain'),
+    show_powered: s.show_powered !== false,
+  };
+  if (style.header === 'photo' && !cover) return { error: 'Add a cover photo link, or pick another header.' };
+
+  const copy: CopySlots = {};
+  for (const key of COPY_KEYS) {
+    const value = words(design.copy_slots?.[key], 200);
+    if (value) copy[key] = value;
+  }
+
+  const { rows: [funnel] } = await db().query<{ client_id: string }>(
+    `update funnels set template = $2, font_pairing = $3, logo_url = $4, rating_question = $5, unhappy_message = $6,
+            birthday_active = $7, okay_routes_happy = $8, copy_slots = $9, style = $10
+      where id = $1 returning client_id`,
+    [
+      funnelId,
+      pick(design.template, Object.keys(THEMES) as Template[], 'midnight'),
+      pick(design.font_pairing, Object.keys(FONT_PAIRINGS) as FontPairing[], 'classic'),
+      logo,
+      words(design.rating_question, 140),
+      words(design.unhappy_message, 300),
+      design.birthday_active !== false,
+      design.okay_routes_happy === true,
+      JSON.stringify(copy),
+      JSON.stringify(style),
+    ],
+  );
+  if (!funnel) return { error: 'That page no longer exists.' };
+  await db().query('update clients set brand_color = $2 where id = $1', [funnel.client_id, color]);
+  refresh();
+  return {};
 }
 
 // ---------- Add a login to an existing client ----------

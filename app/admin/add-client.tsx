@@ -241,6 +241,9 @@ function Factory({ googleSearch, onClose, onAnother }: { googleSearch: boolean; 
                 >
                   {publishing ? 'Publishing…' : 'Publish funnel'}
                 </button>
+                <a href={`/admin/funnel/${c.funnelSlug}`} className={button + ' text-center'}>
+                  Customize the page first
+                </a>
                 <a href={`/admin/preview/${c.funnelSlug}`} target="_blank" rel="noreferrer" className="text-center text-[13px] text-dim underline underline-offset-2 hover:text-text">
                   Open the preview in a new tab
                 </a>
