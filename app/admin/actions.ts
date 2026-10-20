@@ -8,6 +8,7 @@ import { createLogin } from '@/lib/auth/users';
 import { aiSmartFill, type SmartFields } from '@/lib/ai/smart-fill';
 import { ensureClientSheet } from '@/lib/sheets';
 import { readWebsite, type WebsiteLook } from '@/lib/brand/read-website';
+import { searchPlaces, type GooglePlace } from '@/lib/google/places';
 
 // Server Actions are public endpoints under the hood: always re-check admin and validate input.
 
@@ -272,4 +273,20 @@ export async function readClientWebsite(url: string): Promise<WebsiteResult> {
     ? { name: ai.name || look.name || '', vertical: ai.vertical, rating_question: ai.rating_question }
     : { name: look.name ?? '', vertical: /dent|dds|orthodont|smile|teeth|implant/i.test(look.text) ? ('dental' as const) : ('hospitality' as const) };
   return { look, fields, ai: Boolean(ai) };
+}
+
+// ---------- Find on Google ----------
+
+export type PlaceSearchResult = { error: string } | { places: GooglePlace[] };
+
+// "Find on Google": the admin types the business name (and area); we list matches with their review links.
+export async function findOnGoogle(query: string): Promise<PlaceSearchResult> {
+  await requireAdmin();
+  const q = String(query ?? '').trim().slice(0, 200);
+  if (q.length < 2) return { error: 'Type the business name, and the area if it has more than one location.' };
+  try {
+    return { places: await searchPlaces(q) };
+  } catch (err) {
+    return { error: err instanceof Error ? err.message : 'Google search failed. Try again.' };
+  }
 }

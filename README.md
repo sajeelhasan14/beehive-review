@@ -39,6 +39,9 @@ Service variables: `DATABASE_URL=${{Postgres.DATABASE_URL}}`, plus any of the op
 - **AI smart fill**: set `ANTHROPIC_API_KEY`. Without it the form uses the instant pattern fill.
 - **Google Sheets**: set `GOOGLE_SERVICE_ACCOUNT_JSON` (+ `GOOGLE_DRIVE_FOLDER_ID`, `GOOGLE_SHEETS_SHARE_WITH`). A sheet is created when a client is added (or on the first submission for older clients); every submission is appended. Failures show as "sync error" with Retry on the client card and never block a customer.
 
+- **Find on Google**: set `GOOGLE_MAPS_API_KEY` (Places API (New) enabled). Add client then searches Google by name and fills the review link (`https://search.google.com/local/writereview?placeid=…`). The key stays on the server.
+- **Their website**: no key needed. Add client reads the client's site for name, logo, brand color, fonts and theme (`lib/brand/read-website.ts`).
+
 ## Not in Phase 1
 
 Texting (Twilio), the cron worker (alerts, birthdays, win back), monthly report card emails and 5-minute health checks are Phase 2.

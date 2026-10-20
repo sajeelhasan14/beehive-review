@@ -4,6 +4,7 @@ import { requireAdmin } from '@/lib/auth/dal';
 import { getAdminStats, getClientCards, getOpenAlerts, getRecentContacts, type Vertical } from '@/lib/data/admin';
 import { baseUrl } from '@/lib/base-url';
 import { sheetsEnabled } from '@/lib/sheets';
+import { placesEnabled } from '@/lib/google/places';
 import { AppHeader } from '@/app/ui/app-header';
 import { resolveAlert } from '@/app/d/[slug]/actions';
 import { AddClient, AddClientProvider, AddClientSlot } from './add-client';
@@ -81,7 +82,7 @@ async function AdminHome({ searchParams }: { searchParams: Promise<{ vertical?: 
             </div>
           </div>
 
-          <AddClientSlot />
+          <AddClientSlot googleSearch={placesEnabled()} />
 
           {clients.length ? (
             <div className="grid grid-cols-1 gap-4 md:grid-cols-[repeat(auto-fill,minmax(340px,1fr))]">

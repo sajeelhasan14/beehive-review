@@ -1,7 +1,8 @@
 'use client';
 
 import { createContext, use, useActionState, useState, useTransition, type ReactNode } from 'react';
-import { createClient, publishFunnel, readClientWebsite, smartFillWithAi } from './actions';
+import { createClient, findOnGoogle, publishFunnel, readClientWebsite, smartFillWithAi } from './actions';
+import type { GooglePlace } from '@/lib/google/places';
 import { PasswordOnce } from './add-login';
 
 // "+ Add client" from the demo's factory: describe -> fill -> save as draft -> preview -> publish.
@@ -108,14 +109,14 @@ export function AddClient() {
   );
 }
 
-export function AddClientSlot() {
+export function AddClientSlot({ googleSearch }: { googleSearch: boolean }) {
   const { open, setOpen } = useOpen();
   const [round, setRound] = useState(0); // new number = fresh empty form ("Add another")
   if (!open) return null;
-  return <Factory key={round} onClose={() => setOpen(false)} onAnother={() => setRound((r) => r + 1)} />;
+  return <Factory key={round} googleSearch={googleSearch} onClose={() => setOpen(false)} onAnother={() => setRound((r) => r + 1)} />;
 }
 
-function Factory({ onClose, onAnother }: { onClose: () => void; onAnother: () => void }) {
+function Factory({ googleSearch, onClose, onAnother }: { googleSearch: boolean; onClose: () => void; onAnother: () => void }) {
   const [state, formAction, saving] = useActionState(createClient, undefined);
   const [fields, setFields] = useState<Fields>(EMPTY);
   const [filled, setFilled] = useState<string[]>([]);
@@ -131,6 +132,10 @@ function Factory({ onClose, onAnother }: { onClose: () => void; onAnother: () =>
   const [fontName, setFontName] = useState<string | null>(null);
   const [showPaste, setShowPaste] = useState(false);
   const [logoBroken, setLogoBroken] = useState(false);
+  const [placeQuery, setPlaceQuery] = useState<string | null>(null); // null = follow the business name
+  const [places, setPlaces] = useState<GooglePlace[] | null>(null);
+  const [placeNote, setPlaceNote] = useState('');
+  const [searching, startSearch] = useTransition();
 
   const [, startSave] = useTransition();
 
@@ -183,6 +188,20 @@ function Factory({ onClose, onAnother }: { onClose: () => void; onAnother: () =>
           ? `Got their look. We couldn’t find a ${missing.join(' or ')}, so set ${missing.length > 1 ? 'those' : 'it'} under More options if you like.`
           : 'Got their look. Check it below and change anything that’s off.',
       });
+    });
+  }
+
+  function searchGoogle() {
+    const q = (placeQuery ?? fields.name).trim();
+    setPlaceNote('');
+    startSearch(async () => {
+      const res = await findOnGoogle(q).catch(() => ({ error: 'Google search failed. Try again.' }));
+      if ('error' in res) {
+        setPlaces(null);
+        return setPlaceNote(res.error);
+      }
+      setPlaces(res.places);
+      if (!res.places.length) setPlaceNote('No match on Google. Add the area, e.g. "Kyma Flatiron NYC".');
     });
   }
 
@@ -414,9 +433,71 @@ function Factory({ onClose, onAnother }: { onClose: () => void; onAnother: () =>
         </Group>
 
         <Group title="Where happy customers go">
-          <Field label="Review link" hint="Paste the Climbo or Google review link. 4 and 5 star ratings are sent here.">
+          {googleSearch && (
+            <div className="rounded-xl border border-border p-4">
+              <label htmlFor="place-search" className="text-[13px] font-medium">Find them on Google</label>
+              <div className="mt-1.5 flex flex-col gap-2 sm:flex-row">
+                <input
+                  id="place-search"
+                  type="search"
+                  value={placeQuery ?? fields.name}
+                  onChange={(e) => setPlaceQuery(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') {
+                      e.preventDefault();
+                      searchGoogle();
+                    }
+                  }}
+                  placeholder="Business name and area, e.g. Kyma Flatiron NYC"
+                  className={`${input} flex-1 border-border bg-surface`}
+                />
+                <button type="button" onClick={searchGoogle} disabled={searching} className={`${button} shrink-0 sm:py-3`}>
+                  {searching ? 'Searching…' : 'Search Google'}
+                </button>
+              </div>
+              {placeNote && <p className="mt-2 text-[13px] text-alert">{placeNote}</p>}
+              {places && places.length > 0 && (
+                <ul className="mt-3 divide-y divide-border rounded-[10px] border border-border">
+                  {places.map((p) => {
+                    const chosen = fields.review_link === p.reviewLink;
+                    return (
+                      <li key={p.id} className="flex items-center justify-between gap-3 px-3.5 py-3">
+                        <div className="min-w-0">
+                          <div className="truncate text-[14px] font-medium">{p.name}</div>
+                          <div className="truncate text-[12px] text-dim">{p.address}</div>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setFields((f) => ({ ...f, review_link: p.reviewLink }));
+                            setFilled((prev) => [...new Set([...prev, 'review_link'])]);
+                          }}
+                          className={chosen ? `${primary} shrink-0` : `${button} shrink-0`}
+                        >
+                          {chosen ? 'Chosen' : 'Use this'}
+                        </button>
+                      </li>
+                    );
+                  })}
+                </ul>
+              )}
+            </div>
+          )}
+          <Field
+            label="Review link"
+            hint={
+              googleSearch
+                ? 'Filled when you pick a Google match, or paste a Climbo link. 4 and 5 star ratings are sent here.'
+                : 'Paste the Climbo or Google review link. 4 and 5 star ratings are sent here.'
+            }
+          >
             <input name="review_link" type="url" required value={fields.review_link} onChange={set('review_link')} placeholder="https://review.beehivereviews.com/…" className={`${input} ${tint('review_link')}`} />
           </Field>
+          {fields.review_link && /^https?:\/\//.test(fields.review_link) && (
+            <a href={fields.review_link} target="_blank" rel="noreferrer" className="-mt-2 text-[13px] text-dim underline underline-offset-2 hover:text-text">
+              Open the review link to check it
+            </a>
+          )}
         </Group>
 
         <Group title="Plan">
