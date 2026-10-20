@@ -11,7 +11,7 @@ const Fields = z.object({
   name: z.string().describe('Business name exactly as written'),
   vertical: z.enum(['hospitality', 'dental']).describe('dental for dentists/orthodontists/dental offices, otherwise hospitality'),
   review_link: z.string().describe('The review URL if one is given, else ""'),
-  tier: z.enum(['1', '2', '3', '']).describe('Tier number if stated, else ""'),
+  tier: z.enum(['1', '2', '3', '']).describe('Plan if stated: Capture or tier 1 = "1", Command or tier 2 = "2", Revenue or tier 3 = "3", else ""'),
   avg_ticket: z.string().describe('Average ticket or visit value in whole dollars, digits only, if stated, else ""'),
   owner_name: z.string().describe('Owner or manager name if given, else ""'),
   owner_email: z.string().describe('Owner or manager email if given, else ""'),

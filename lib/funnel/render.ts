@@ -89,7 +89,7 @@ export function renderFunnel(f: FunnelView | null): string {
 *{box-sizing:border-box;margin:0}
 body{background:var(--bg);color:var(--text);font-family:${fonts.body};min-height:100vh;display:flex;flex-direction:column;align-items:center;padding:24px 20px 40px}
 header{display:flex;flex-direction:column;align-items:center;gap:8px;margin-top:8px;text-align:center}
-.logo{width:56px;height:56px;border-radius:50%;object-fit:cover;border:2px solid var(--brand)}
+.logo{width:56px;height:56px;border-radius:50%;object-fit:contain;padding:6px;background:#fff;border:2px solid var(--brand)}
 .logofallback{width:56px;height:56px;border-radius:50%;display:grid;place-items:center;background:var(--brand);color:var(--bg);font-weight:700;font-size:24px;font-family:${fonts.display}}
 .bizname{font-family:${fonts.display};font-size:22px;letter-spacing:.02em}
 .powered{font-size:10px;letter-spacing:.28em;color:var(--dim);text-transform:uppercase}

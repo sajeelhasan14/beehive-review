@@ -7,6 +7,7 @@ import { requireAdmin } from '@/lib/auth/dal';
 import { createLogin } from '@/lib/auth/users';
 import { aiSmartFill, type SmartFields } from '@/lib/ai/smart-fill';
 import { ensureClientSheet } from '@/lib/sheets';
+import { readWebsite, type WebsiteLook } from '@/lib/brand/read-website';
 
 // Server Actions are public endpoints under the hood: always re-check admin and validate input.
 
@@ -90,11 +91,15 @@ const VERTICAL_DEFAULTS = {
   },
 } as const;
 
+// The looks Add client may pick (from the website or by hand). Matches the funnels table checks.
+const TEMPLATES = ['midnight', 'ivory', 'marquee'];
+const FONTS = ['classic', 'modern', 'editorial', 'bold', 'quiet'];
+
 export type NewLoginResult = { email: string; password: string };
 
 export type CreateClientState =
   | { error: string }
-  | { created: { name: string; funnelId: string; funnelSlug: string; login: NewLoginResult | null } }
+  | { created: { name: string; slug: string; funnelId: string; funnelSlug: string; login: NewLoginResult | null } }
   | undefined;
 
 export async function createClient(_previous: CreateClientState, formData: FormData): Promise<CreateClientState> {
@@ -107,8 +112,14 @@ export async function createClient(_previous: CreateClientState, formData: FormD
   const ticketText = field(formData, 'avg_ticket', 10);
   const color = field(formData, 'brand_color', 7) ?? '#E8B54D';
   const question = field(formData, 'rating_question', 140);
-  const ownerName = field(formData, 'owner_name', 80);
+  // No name typed? The login still works; it's shown as "{Business} owner" until renamed.
+  const ownerName = field(formData, 'owner_name', 80) ?? (name ? `${name} owner`.slice(0, 80) : null);
   const ownerEmail = field(formData, 'owner_email', 200)?.toLowerCase() ?? null;
+
+  const website = field(formData, 'website', 500);
+  const logoUrl = field(formData, 'logo_url', 1000);
+  const fontPairing = String(formData.get('font_pairing') ?? '');
+  const template = String(formData.get('template') ?? '');
 
   const defaults = VERTICAL_DEFAULTS[vertical];
   const slug = name ? toSlug(name) : '';
@@ -119,23 +130,25 @@ export async function createClient(_previous: CreateClientState, formData: FormD
   if (![1, 2, 3].includes(tier)) return { error: 'Pick a tier.' };
   if (!Number.isFinite(avgTicket) || avgTicket < 0 || avgTicket > 100000) return { error: 'Average ticket must be a number.' };
   if (!/^#[0-9a-f]{6}$/i.test(color)) return { error: 'Brand color must look like #E8B54D.' };
+  if (website && !isHttpUrl(website)) return { error: 'The website must start with https://' };
+  if (logoUrl && !isHttpUrl(logoUrl)) return { error: 'The logo must be a link starting with https://' };
   if (ownerEmail && !EMAIL.test(ownerEmail)) return { error: 'Owner email doesn’t look right.' };
-  if (ownerEmail && !ownerName) return { error: 'Add the owner’s name for their login.' };
 
   // One transaction: client + draft funnel + login all save, or none do.
   const tx = await db().connect();
   try {
     await tx.query('begin');
     const { rows: [client] } = await tx.query<{ id: string }>(
-      `insert into clients (slug, name, vertical, tier, dashboard_enabled, avg_ticket, brand_color, review_link)
-       values ($1, $2, $3, $4, $5, $6, $7, $8) returning id`,
-      [slug, name, vertical, tier, tier >= 2, avgTicket, color, reviewLink],
+      `insert into clients (slug, name, vertical, tier, dashboard_enabled, avg_ticket, brand_color, review_link, website)
+       values ($1, $2, $3, $4, $5, $6, $7, $8, $9) returning id`,
+      [slug, name, vertical, tier, tier >= 2, avgTicket, color, reviewLink, website],
     );
     const funnelSlug = `${slug}-review`;
     const { rows: [funnel] } = await tx.query<{ id: string }>(
-      `insert into funnels (client_id, slug, template, font_pairing, brand_accent, rating_question, unhappy_message, copy_slots, status)
-       values ($1, $2, $3, $4, $5, $6, $7, $8, 'draft') returning id`,
-      [client.id, funnelSlug, defaults.template, defaults.font, defaults.accent, question ?? defaults.question,
+      `insert into funnels (client_id, slug, template, font_pairing, brand_accent, logo_url, rating_question, unhappy_message, copy_slots, status)
+       values ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'draft') returning id`,
+      [client.id, funnelSlug, TEMPLATES.includes(template) ? template : defaults.template,
+       FONTS.includes(fontPairing) ? fontPairing : defaults.font, defaults.accent, logoUrl, question ?? defaults.question,
        defaults.unhappy, JSON.stringify(defaults.slots)],
     );
     const password = ownerEmail && ownerName
@@ -149,6 +162,7 @@ export async function createClient(_previous: CreateClientState, formData: FormD
     return {
       created: {
         name,
+        slug,
         funnelId: funnel.id,
         funnelSlug,
         login: ownerEmail && password ? { email: ownerEmail, password } : null,
@@ -224,4 +238,38 @@ export async function retrySheet(clientId: string): Promise<void> {
   await db().query('update clients set sheet_error = null where id = $1', [clientId]);
   await ensureClientSheet(clientId);
   refresh();
+}
+
+// ---------- Their website ----------
+
+export type WebsiteResult =
+  | { error: string }
+  | { look: WebsiteLook; fields: Partial<SmartFields> & { vertical?: 'hospitality' | 'dental' }; ai: boolean };
+
+// Reads the client's site for their look, then runs the smart fill on its words for name, type and question.
+export async function readClientWebsite(url: string): Promise<WebsiteResult> {
+  await requireAdmin();
+  let look: WebsiteLook;
+  try {
+    look = await readWebsite(String(url ?? '').slice(0, 500));
+  } catch (err) {
+    const text = err instanceof Error ? err.message : '';
+    const message = /timeout|aborted/i.test(text)
+      ? 'That website didn’t answer in time. Try again, or fill the form by hand.'
+      : /fetch failed/i.test(text)
+        ? 'Couldn’t connect to that website. Check the address (try it in your browser), or fill the form by hand.'
+        : text || 'Couldn’t read that website. Fill the form by hand.';
+    return { error: message };
+  }
+
+  let ai: SmartFields | null = null;
+  try {
+    ai = await aiSmartFill(`Website: ${look.website}\n${look.name ? `Name: ${look.name}\n` : ''}${look.text}`);
+  } catch (err) {
+    console.error('AI smart fill (website) failed:', err);
+  }
+  const fields = ai
+    ? { name: ai.name || look.name || '', vertical: ai.vertical, rating_question: ai.rating_question }
+    : { name: look.name ?? '', vertical: /dent|dds|orthodont|smile|teeth|implant/i.test(look.text) ? ('dental' as const) : ('hospitality' as const) };
+  return { look, fields, ai: Boolean(ai) };
 }
