@@ -26,6 +26,9 @@ export interface ClientSummary {
   dashboard_enabled: boolean;
   brand_color: string;
   upgrade_requested_at: Date | null;
+  dashboard_theme: 'light' | 'dark';
+  dashboard_style: 'classic' | 'spotlight' | 'tiles';
+  dashboard_sample: boolean;
 }
 
 // Reads the session cookie and returns the user, or null. cache() = one database read per request.
@@ -76,7 +79,8 @@ export async function getClientAccess(slug: string): Promise<{ user: CurrentUser
 
 async function findClientFor(user: CurrentUser, slug: string): Promise<ClientSummary | null> {
   const { rows } = await db().query<ClientSummary>(
-    `select id, slug, name, vertical, tier, dashboard_enabled, brand_color, upgrade_requested_at
+    `select id, slug, name, vertical, tier, dashboard_enabled, brand_color, upgrade_requested_at,
+            dashboard_theme, dashboard_style, dashboard_sample
        from clients where slug = $1 and status <> 'cancelled'`,
     [slug],
   );

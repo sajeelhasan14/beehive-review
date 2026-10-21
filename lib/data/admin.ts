@@ -26,6 +26,7 @@ export interface ClientCard {
   google_sheet_id: string | null;
   sheet_error: string | null;
   upgrade_requested_at: Date | null;
+  dashboard_sample: boolean;
 }
 
 export interface OpenAlert {
@@ -62,7 +63,7 @@ export async function getClientCards(vertical: Vertical | null): Promise<ClientC
   await requireAdmin();
   const { rows } = await db().query<ClientCard>(
     `select c.id, c.slug, c.name, c.vertical, c.tier, c.dashboard_enabled, c.status,
-            c.review_link, c.google_sheet_id, c.sheet_error, c.upgrade_requested_at,
+            c.review_link, c.google_sheet_id, c.sheet_error, c.upgrade_requested_at, c.dashboard_sample,
             f.id as funnel_id, f.slug as funnel_slug, f.status as funnel_status,
             (select count(*) from contacts ct where ct.client_id = c.id)::int as contacts,
             (select count(*) from submissions s where s.client_id = c.id and s.path = 'happy')::int as reviews,

@@ -65,6 +65,25 @@ export async function setDashboard(clientId: string, enabled: boolean): Promise<
   refresh();
 }
 
+// ---------- Dashboard look (admin bar on /d/{slug}) ----------
+
+export interface DashboardLook {
+  theme: 'light' | 'dark';
+  style: 'classic' | 'spotlight' | 'tiles';
+  sample: boolean;
+}
+
+// Light or dark, the layout, and sample data for demos. EMRG decides these, never the client.
+export async function setDashboardLook(clientId: string, look: DashboardLook): Promise<void> {
+  await requireAdmin();
+  if (!UUID.test(clientId) || !look || typeof look.sample !== 'boolean') throw new Error('Invalid dashboard look');
+  await db().query(
+    'update clients set dashboard_theme = $2, dashboard_style = $3, dashboard_sample = $4 where id = $1',
+    [clientId, pick(look.theme, ['light', 'dark'], 'light'), pick(look.style, ['classic', 'spotlight', 'tiles'], 'classic'), look.sample],
+  );
+  refresh();
+}
+
 // ---------- Add client (Part 5b) ----------
 
 // Funnel look and wording per vertical, from the demo's funnelObj().

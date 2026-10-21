@@ -30,6 +30,23 @@ body {
   background: #ead9bd;
 }
 
+/* Dark client dashboards (clients.dashboard_theme = 'dark', set by EMRG): the same tokens at night.
+   The dashboard wraps itself in data-dash-theme, so the whole page (body and footer too) follows. */
+:root:has([data-dash-theme="dark"]) {
+  --color-bg: #121110;
+  --color-surface: #1b1a17;
+  --color-surface2: #24221e;
+  --color-border: #34312b;
+  --color-text: #f3efe6;
+  --color-dim: #a39d91;
+  --color-metric: #f3efe6;
+  --color-alert: #e57373;
+  --color-ok: #6fbf8f;
+  --color-warn: #d6a24e;
+  --color-brand: #c9a46a;
+  color-scheme: dark;
+}
+
 /* One focus style everywhere: an ink ring, visible on ivory and white. */
 :where(a, button, input, select, textarea, summary):focus-visible {
   outline: 2px solid var(--color-text);

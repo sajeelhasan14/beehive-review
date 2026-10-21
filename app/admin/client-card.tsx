@@ -38,6 +38,7 @@ export function ClientCard({ client, baseUrl, sheets }: { client: Card; baseUrl:
             )}
             {client.status === 'paused' && <span className={`${tag} bg-warn/10 text-warn`}>Account paused</span>}
             {client.upgrade_requested_at && <span className={`${tag} bg-ok/10 text-ok`}>Wants to upgrade</span>}
+            {client.dashboard_sample && <span className={`${tag} bg-warn/10 text-warn`}>Sample data</span>}
           </div>
         </div>
 

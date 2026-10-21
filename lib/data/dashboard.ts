@@ -1,6 +1,7 @@
 import 'server-only';
 import { db } from '@/lib/db';
 import { requireClientAccess } from '@/lib/auth/dal';
+import { sampleDashboard } from '@/lib/data/sample';
 
 // Everything the client dashboard (/d/{slug}) reads. Each query is scoped to one client_id,
 // and getDashboard() runs requireClientAccess() first, so one client can never see another's rows.
@@ -43,12 +44,25 @@ export interface DashboardStats {
   ratings: [number, number, number, number, number]; // count of 5, 4, 3, 2, 1 star ratings
 }
 
+// Ratings on one day (New York date), for the 30 day chart.
+export interface DayCount {
+  day: string; // 2026-10-21
+  happy: number;
+  unhappy: number;
+}
+
 export async function getDashboard(slug: string) {
   const { user, client } = await requireClientAccess(slug);
+  const id = client.id;
+
+  // Sample data (an admin switch for demos) shows even when the dashboard is off, and reads no customer rows.
+  if (client.dashboard_sample) {
+    const { rows: [c] } = await db().query<{ avg_ticket: string }>('select avg_ticket from clients where id = $1', [id]);
+    return { user, client, data: sampleDashboard(client, Number(c.avg_ticket)) };
+  }
   if (!client.dashboard_enabled) return { user, client, data: null };
 
-  const id = client.id;
-  const [stats, money, guests, alerts, birthdays] = await Promise.all([
+  const [stats, money, guests, alerts, birthdays, daily] = await Promise.all([
     db().query<Omit<DashboardStats, 'ratings' | 'returning_this_month'> & { r5: number; r4: number; r3: number; r2: number; r1: number }>(
       `select (select count(*) from contacts where client_id = $1)::int as customers,
               count(*) filter (where path = 'happy')::int as reviews,
@@ -101,6 +115,15 @@ export async function getDashboard(slug: string) {
         order by birthday_day nulls last`,
       [id, TZ],
     ),
+    db().query<DayCount>(
+      `select to_char(d, 'YYYY-MM-DD') as day,
+              count(s.id) filter (where s.path = 'happy')::int as happy,
+              count(s.id) filter (where s.path = 'unhappy')::int as unhappy
+         from generate_series((now() at time zone $2)::date - 29, (now() at time zone $2)::date, interval '1 day') d
+         left join submissions s on s.client_id = $1 and (s.created_at at time zone $2)::date = d::date
+        group by d order by d`,
+      [id, TZ],
+    ),
   ]);
 
   const s = stats.rows[0];
@@ -127,6 +150,8 @@ export async function getDashboard(slug: string) {
       birthdays: birthdays.rows,
       // Dental recall: patients whose last visit is longest ago come first (6 month recall).
       recall: [...guests.rows].sort((a, b) => +a.last_seen_at - +b.last_seen_at).slice(0, 8),
+      daily: daily.rows,
+      sample: false,
     },
   };
 }

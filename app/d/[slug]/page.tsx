@@ -1,8 +1,9 @@
 import { Suspense, type CSSProperties, type ReactNode } from 'react';
 import { getDashboard, type DashboardData, type Guest } from '@/lib/data/dashboard';
 import type { ClientSummary, CurrentUser } from '@/lib/auth/dal';
-import { AppHeader, headerButton as button } from '@/app/ui/app-header';
+import { AppHeader, headerButton as button, inkOn } from '@/app/ui/app-header';
 import { requestUpgrade, resolveAlert } from './actions';
+import { LookBar } from './look-bar';
 
 // Client dashboard: /d/kyma. Only Kyma's own logins (and admins) get past requireClientAccess.
 // Layout and wording follow renderClientDash() / renderWall() in Mario's demo.
@@ -40,8 +41,10 @@ async function Dashboard({ params }: { params: Promise<{ slug: string }> }) {
   const { user, client, data } = await getDashboard(slug);
   const hosp = client.vertical === 'hospitality';
 
+  const look = { theme: client.dashboard_theme, style: client.dashboard_style, sample: client.dashboard_sample };
+
   return (
-    <div style={{ '--client': client.brand_color } as CSSProperties}>
+    <div data-dash-theme={client.dashboard_theme} style={{ '--client': client.brand_color } as CSSProperties}>
       <AppHeader
         title={client.name}
         subtitle={`${hosp ? 'Hospitality' : 'Dental'}, Tier ${client.tier} ${TIERS[client.tier]}`}
@@ -49,9 +52,18 @@ async function Dashboard({ params }: { params: Promise<{ slug: string }> }) {
         mark={client.brand_color}
       >
         {user.role === 'admin' && <a href="/admin" className={button}>Back to admin</a>}
-        {data && <a href={`/d/${client.slug}/contacts.csv`} className={button}>Download my sheet</a>}
+        {data && !data.sample && <a href={`/d/${client.slug}/contacts.csv`} className={button}>Download my sheet</a>}
       </AppHeader>
-      {data ? <Full client={client} data={data} /> : <Wall client={client} user={user} />}
+      {user.role === 'admin' && <LookBar clientId={client.id} look={look} />}
+      {!data ? (
+        <Wall client={client} user={user} />
+      ) : client.dashboard_style === 'spotlight' ? (
+        <Spotlight v={view(client, data)} />
+      ) : client.dashboard_style === 'tiles' ? (
+        <Tiles v={view(client, data)} />
+      ) : (
+        <Classic v={view(client, data)} />
+      )}
     </div>
   );
 }
@@ -84,7 +96,10 @@ function Wall({ client, user }: { client: ClientSummary; user: CurrentUser }) {
   );
 }
 
-function Full({ client, data }: { client: ClientSummary; data: DashboardData }) {
+// What every layout shows, worked out once. The three layouts below only arrange these pieces.
+type View = ReturnType<typeof view>;
+
+function view(client: ClientSummary, data: DashboardData) {
   const hosp = client.vertical === 'hospitality';
   const { stats } = data;
   const t = client.tier;
@@ -109,139 +124,333 @@ function Full({ client, data }: { client: ClientSummary; data: DashboardData }) 
     ? `Counts only ${unit} this month from ${people} the system already had on file, times your average ${hosp ? 'ticket' : 'visit'} of ${money(data.avgTicket)}. Nothing projected, nothing promised.`
     : `Nothing counted yet. This number only moves when a ${hosp ? 'customer' : 'patient'} this system reached comes back. ${t >= 3 ? 'Give the texts 30 days.' : 'Turn on win back to start.'}`;
 
-  const max = Math.max(1, ...stats.ratings);
-  const side = hosp ? data.birthdays : data.recall;
+  const figures = [
+    { label: hosp ? 'Customers' : 'Patients', value: stats.customers },
+    { label: 'Sent to Google', value: stats.reviews },
+    { label: 'Average rating', value: stats.avg_rating ?? '—' },
+    { label: hosp ? 'Birthdays this month' : 'Alerts handled', value: hosp ? data.birthdays.length : `${stats.resolved}/${stats.unhappy}` },
+    { label: 'Unhappy caught', value: stats.unhappy },
+  ];
 
+  return { client, data, stats, hosp, unit, autos, moneyNote, figures };
+}
+
+// ---------- Layout 1: Classic. Editorial, the money figure first, then everything in reading order. ----------
+
+function Classic({ v }: { v: View }) {
   return (
     <>
       <section className="mb-10 grid gap-6 border-b border-border pb-10 md:grid-cols-[auto_1fr] md:items-end md:gap-12">
         <div>
           <p className="mb-3 text-[13px] text-dim">Brought back this month, estimated</p>
-          <p className="figure text-[64px] font-bold leading-[.9] sm:text-[80px]">{money(data.estimate)}</p>
+          <p className="figure text-[64px] font-bold leading-[.9] sm:text-[80px]">{money(v.data.estimate)}</p>
         </div>
-        <div className="max-w-[460px] md:pb-2">
-          <p className="mb-2 text-[15px]">
-            <span className="figure text-[22px] font-bold">{stats.returning_this_month}</span>{' '}
-            returning {stats.returning_this_month === 1 ? unit.slice(0, -1) : unit}
-          </p>
-          <p className="text-[13px] leading-relaxed text-dim">{moneyNote}</p>
-        </div>
+        <Returning v={v} />
       </section>
 
       <section className="mb-10 grid grid-cols-2 overflow-hidden rounded-2xl border border-border bg-surface sm:grid-cols-3 lg:grid-cols-5">
-        <Figure label={hosp ? 'Customers' : 'Patients'} value={stats.customers} />
-        <Figure label="Sent to Google" value={stats.reviews} />
-        <Figure label="Average rating" value={stats.avg_rating ?? '—'} />
-        <Figure
-          label={hosp ? 'Birthdays this month' : 'Alerts handled'}
-          value={hosp ? data.birthdays.length : `${stats.resolved}/${stats.unhappy}`}
-        />
-        <Figure label="Unhappy caught" value={stats.unhappy} />
+        {v.figures.map((f) => <Figure key={f.label} label={f.label} value={f.value} />)}
       </section>
 
       <section className="mb-10">
         <h2 className="mb-4 font-serif text-[19px] font-bold">Automations</h2>
-        <div className="grid grid-cols-1 gap-x-10 gap-y-5 sm:grid-cols-2">
-          {autos.map((a) => (
-            <div key={a.h} className="flex gap-3">
-              <span
-                aria-hidden
-                className={`mt-[5px] size-2.5 shrink-0 rounded-full ${a.on ? 'bg-ok' : 'border border-dim'}`}
-              />
-              <div>
-                <h3 className="text-[14px] font-semibold">
-                  {a.h} <span className={`ml-1 text-xs font-medium ${a.on ? 'text-ok' : 'text-dim'}`}>{a.on ? 'On' : 'Off'}</span>
-                </h3>
-                <p className="mt-0.5 text-[13px] leading-relaxed text-dim">{a.p}</p>
-              </div>
-            </div>
-          ))}
-        </div>
+        <Automations v={v} columns />
       </section>
 
-      {data.alerts.length > 0 && (
-        <section className={`${zone} mb-6 border-alert/50 shadow-[inset_3px_0_0_var(--color-alert)]`}>
-          <ZoneHead title={hosp ? 'Unhappy customers to call back' : 'Unhappy patients to call back'} note={`${data.alerts.length} open`} />
-          <ul className="divide-y divide-border">
-            {data.alerts.map((a) => (
-              <li key={a.id} className="flex flex-wrap items-start justify-between gap-3 py-3.5 first:pt-0 last:pb-0">
-                <div>
-                  <span className="font-medium">{a.first_name || 'Anonymous'}</span>{' '}
-                  <span className="ml-1 text-brand" aria-label={`${a.rating} out of 5`}>{stars(a.rating)}</span>
-                  <div className="mt-0.5 text-xs text-dim">{phone(a.phone) || 'No phone left'}, {date(a.created_at)}</div>
-                  {a.feedback_text && <p className="mt-1.5 max-w-[65ch] font-serif text-[14px] leading-relaxed">“{a.feedback_text}”</p>}
-                </div>
-                <form action={resolveAlert.bind(null, a.id)}>
-                  <button type="submit" className={button}>Mark resolved</button>
-                </form>
-              </li>
-            ))}
-          </ul>
-        </section>
-      )}
+      <Alerts v={v} className="mb-6" />
 
       <section className="mb-6 grid grid-cols-1 gap-6 lg:grid-cols-2">
-        <div className={zone}>
-          <ZoneHead title="Ratings" note={`${stats.ratings.reduce((a, b) => a + b, 0)} total`} />
-          <div className="grid gap-2.5">
-            {[5, 4, 3, 2, 1].map((r, i) => (
-              <div key={r} className="grid grid-cols-[44px_1fr_32px] items-center gap-3 text-[13px]">
-                <span className="text-dim">{r} star</span>
-                <div className="h-1.5 overflow-hidden rounded-full bg-surface2">
-                  <div className="h-full rounded-full bg-[var(--client)]" style={{ width: `${(stats.ratings[i] / max) * 100}%` }} />
-                </div>
-                <span className="text-right tabular-nums">{stats.ratings[i]}</span>
-              </div>
-            ))}
+        <Ratings v={v} className={zone} />
+        <SideList v={v} className={zone} />
+      </section>
+
+      <Guests v={v} />
+    </>
+  );
+}
+
+// ---------- Layout 2: Spotlight. A big panel in the client's own color, the 30 day chart, two columns. ----------
+
+function Spotlight({ v }: { v: View }) {
+  const ink = inkOn(v.client.brand_color);
+  return (
+    <>
+      <section
+        className="mb-8 grid gap-8 overflow-hidden rounded-3xl p-7 sm:p-10 lg:grid-cols-[1.1fr_1fr] lg:items-end"
+        style={{ background: v.client.brand_color, color: ink }}
+      >
+        <div>
+          <p className="mb-3 text-[13px] opacity-75">Brought back this month, estimated</p>
+          <p className="figure text-[68px] font-bold leading-[.9] sm:text-[92px]">{money(v.data.estimate)}</p>
+          <p className="mt-5 text-[15px]">
+            <span className="figure text-[22px] font-bold">{v.stats.returning_this_month}</span> returning{' '}
+            {v.stats.returning_this_month === 1 ? v.unit.slice(0, -1) : v.unit}
+          </p>
+          <p className="mt-1.5 max-w-[52ch] text-[13px] leading-relaxed opacity-75">{v.moneyNote}</p>
+        </div>
+        <dl className="grid grid-cols-3 gap-4">
+          {v.figures.slice(0, 3).map((f) => (
+            <div key={f.label} className="flex flex-col-reverse border-t pt-3" style={{ borderColor: `${ink}33` }}>
+              <dt className="mt-1.5 text-xs opacity-75">{f.label}</dt>
+              <dd className="figure text-[30px] font-bold leading-none sm:text-[36px]">{f.value}</dd>
+            </div>
+          ))}
+        </dl>
+      </section>
+
+      <div className="mb-6 grid grid-cols-1 gap-6 lg:grid-cols-[1.5fr_1fr]">
+        <div className="grid content-start gap-6">
+          <div className={zone}>
+            <Trend v={v} />
+          </div>
+          <Alerts v={v} />
+          <SideList v={v} className={zone} />
+        </div>
+        <div className="grid content-start gap-6">
+          <Ratings v={v} className={zone} />
+          <div className={zone}>
+            <ZoneHead title="Unhappy caught" note={`${v.stats.resolved} of ${v.stats.unhappy} handled`} />
+            <p className="figure text-[44px] font-bold leading-none">{v.stats.unhappy}</p>
+            <p className="mt-2 text-[13px] text-dim">Kept off Google and sent to you instead.</p>
+          </div>
+          <div className={zone}>
+            <ZoneHead title="Automations" note={`${v.autos.filter((a) => a.on).length} of ${v.autos.length} on`} />
+            <Automations v={v} />
           </div>
         </div>
-        <div className={zone}>
-          <ZoneHead
-            title={hosp ? 'Birthdays this month' : 'Recall list'}
-            note={hosp ? plural(data.birthdays.length, 'guest') : plural(stats.customers, 'patient')}
-          />
-          {side.length ? (
-            <Table head={['Name', hosp ? 'Birthday' : 'Last visit', ...(hosp ? [] : ['Recall due']), 'Phone']}>
-              {side.map((g) => (
-                <tr key={g.id}>
-                  <Td>{g.first_name}</Td>
-                  <Td>{hosp ? birthday(g) : date(g.last_seen_at)}</Td>
-                  {!hosp && <Td>{date(recallDue(g))}</Td>}
-                  <Td className="whitespace-nowrap tabular-nums">{phone(g.phone)}</Td>
-                </tr>
-              ))}
-            </Table>
-          ) : (
-            <p className="text-dim">
-              {hosp ? 'No birthdays this month yet. Guests add theirs when they rate you.' : 'No patients yet. They appear after their first rating.'}
-            </p>
-          )}
+      </div>
+
+      <Guests v={v} />
+    </>
+  );
+}
+
+// ---------- Layout 3: Tiles. Everything at a glance in a grid of cards, numbers first. ----------
+
+const tile = 'rounded-2xl border border-border bg-surface p-5';
+
+function Tiles({ v }: { v: View }) {
+  return (
+    <>
+      <section className="mb-4 grid grid-cols-2 gap-4 lg:grid-cols-4">
+        <div className={`${tile} col-span-2 border-l-4`} style={{ borderLeftColor: v.client.brand_color }}>
+          <p className="text-[13px] text-dim">Brought back this month, estimated</p>
+          <p className="figure mt-3 text-[56px] font-bold leading-none">{money(v.data.estimate)}</p>
+          <p className="mt-3 text-[13px] text-dim">
+            {plural(v.stats.returning_this_month, v.unit.slice(0, -1))} from people already on file, at {money(v.data.avgTicket)} each
+          </p>
+        </div>
+        {v.figures.map((f) => (
+          <div key={f.label} className={tile}>
+            <p className="text-[13px] text-dim">{f.label}</p>
+            <p className="figure mt-3 text-[36px] font-bold leading-none">{f.value}</p>
+            {f.label === 'Average rating' && typeof f.value === 'number' && (
+              <p className="mt-2 text-[15px] text-[var(--client)]" aria-hidden>{stars(Math.round(f.value))}</p>
+            )}
+          </div>
+        ))}
+        <div className={tile}>
+          <p className="text-[13px] text-dim">Automations on</p>
+          <p className="figure mt-3 text-[36px] font-bold leading-none">
+            {v.autos.filter((a) => a.on).length}<span className="text-dim">/{v.autos.length}</span>
+          </p>
         </div>
       </section>
 
-      <section className={zone}>
-        <ZoneHead title={hosp ? 'Guest list' : 'Patient list'} note={`Only ${client.name} can see this`} />
-        {data.guests.length ? (
-          <div className="-mx-2 overflow-x-auto">
-            <Table wide head={['Name', 'Phone', 'Birthday', 'Rating', 'Visits', 'Feedback', 'Last seen']}>
-              {data.guests.map((g) => (
-                <tr key={g.id}>
-                  <Td>{[g.first_name, g.last_name].filter(Boolean).join(' ')}</Td>
-                  <Td className="whitespace-nowrap tabular-nums">{phone(g.phone)}</Td>
-                  <Td>{birthday(g)}</Td>
-                  <Td className="whitespace-nowrap text-brand">{stars(g.last_rating)}</Td>
-                  <Td className="tabular-nums">{g.visits}</Td>
-                  <Td className="max-w-[28ch]">{g.last_feedback}</Td>
-                  <Td className="whitespace-nowrap tabular-nums">{date(g.last_seen_at)}</Td>
-                </tr>
-              ))}
-            </Table>
-          </div>
-        ) : (
-          <p className="text-dim">Nothing yet. Scan your QR code and leave a test rating to see it here.</p>
-        )}
+      <section className="mb-4 grid grid-cols-1 gap-4 lg:grid-cols-3">
+        <div className={`${tile} lg:col-span-2`}>
+          <Trend v={v} />
+        </div>
+        <Ratings v={v} className={tile} />
       </section>
+
+      <section className="mb-4 grid grid-cols-1 gap-4 lg:grid-cols-2">
+        {v.data.alerts.length > 0 ? <Alerts v={v} /> : (
+          <div className={tile}>
+            <ZoneHead title="Unhappy customers" note="All handled" />
+            <p className="text-dim">Nobody is waiting on a call back.</p>
+          </div>
+        )}
+        <SideList v={v} className={tile} />
+      </section>
+
+      <section className={`${tile} mb-4`}>
+        <ZoneHead title="Automations" note={`Tier ${v.client.tier} ${TIERS[v.client.tier]}`} />
+        <Automations v={v} columns />
+      </section>
+
+      <Guests v={v} />
     </>
+  );
+}
+
+// ---------- Pieces the layouts share ----------
+
+function Returning({ v }: { v: View }) {
+  return (
+    <div className="max-w-[460px] md:pb-2">
+      <p className="mb-2 text-[15px]">
+        <span className="figure text-[22px] font-bold">{v.stats.returning_this_month}</span>{' '}
+        returning {v.stats.returning_this_month === 1 ? v.unit.slice(0, -1) : v.unit}
+      </p>
+      <p className="text-[13px] leading-relaxed text-dim">{v.moneyNote}</p>
+    </div>
+  );
+}
+
+function Automations({ v, columns }: { v: View; columns?: boolean }) {
+  return (
+    <div className={`grid grid-cols-1 gap-x-10 gap-y-5 ${columns ? 'sm:grid-cols-2' : ''}`}>
+      {v.autos.map((a) => (
+        <div key={a.h} className="flex gap-3">
+          <span aria-hidden className={`mt-[5px] size-2.5 shrink-0 rounded-full ${a.on ? 'bg-ok' : 'border border-dim'}`} />
+          <div>
+            <h3 className="text-[14px] font-semibold">
+              {a.h} <span className={`ml-1 text-xs font-medium ${a.on ? 'text-ok' : 'text-dim'}`}>{a.on ? 'On' : 'Off'}</span>
+            </h3>
+            <p className="mt-0.5 text-[13px] leading-relaxed text-dim">{a.p}</p>
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function Alerts({ v, className = '' }: { v: View; className?: string }) {
+  if (!v.data.alerts.length) return null;
+  return (
+    <section className={`${zone} border-alert/50 shadow-[inset_3px_0_0_var(--color-alert)] ${className}`}>
+      <ZoneHead title={v.hosp ? 'Unhappy customers to call back' : 'Unhappy patients to call back'} note={`${v.data.alerts.length} open`} />
+      <ul className="divide-y divide-border">
+        {v.data.alerts.map((a) => (
+          <li key={a.id} className="flex flex-wrap items-start justify-between gap-3 py-3.5 first:pt-0 last:pb-0">
+            <div>
+              <span className="font-medium">{a.first_name || 'Anonymous'}</span>{' '}
+              <span className="ml-1 text-brand" aria-label={`${a.rating} out of 5`}>{stars(a.rating)}</span>
+              <div className="mt-0.5 text-xs text-dim">{phone(a.phone) || 'No phone left'}, {date(a.created_at)}</div>
+              {a.feedback_text && <p className="mt-1.5 max-w-[65ch] font-serif text-[14px] leading-relaxed">“{a.feedback_text}”</p>}
+            </div>
+            {v.data.sample ? (
+              <button type="button" disabled className={`${button} opacity-60`}>Mark resolved</button>
+            ) : (
+              <form action={resolveAlert.bind(null, a.id)}>
+                <button type="submit" className={button}>Mark resolved</button>
+              </form>
+            )}
+          </li>
+        ))}
+      </ul>
+    </section>
+  );
+}
+
+function Ratings({ v, className }: { v: View; className: string }) {
+  const max = Math.max(1, ...v.stats.ratings);
+  return (
+    <div className={className}>
+      <ZoneHead title="Ratings" note={`${v.stats.ratings.reduce((a, b) => a + b, 0)} total`} />
+      <div className="grid gap-2.5">
+        {[5, 4, 3, 2, 1].map((r, i) => (
+          <div key={r} className="grid grid-cols-[44px_1fr_32px] items-center gap-3 text-[13px]">
+            <span className="text-dim">{r} star</span>
+            <div className="h-1.5 overflow-hidden rounded-full bg-surface2">
+              <div className="h-full rounded-full bg-[var(--client)]" style={{ width: `${(v.stats.ratings[i] / max) * 100}%` }} />
+            </div>
+            <span className="text-right tabular-nums">{v.stats.ratings[i]}</span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// Ratings per day for the last 30 days: happy in the client's color, unhappy stacked on top in red.
+function Trend({ v }: { v: View }) {
+  const days = v.data.daily;
+  const max = Math.max(1, ...days.map((d) => d.happy + d.unhappy));
+  const total = days.reduce((n, d) => n + d.happy + d.unhappy, 0);
+  const w = 100 / days.length;
+  const label = (day: string) => new Date(`${day}T12:00:00`).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+  return (
+    <>
+      <ZoneHead title="Last 30 days" note={`${plural(total, 'rating')}`} />
+      <svg viewBox="0 0 100 40" preserveAspectRatio="none" className="h-36 w-full" role="img" aria-label={`${total} ratings in the last 30 days`}>
+        {days.map((d, i) => {
+          const hh = (d.happy / max) * 38;
+          const uh = (d.unhappy / max) * 38;
+          return (
+            <g key={d.day}>
+              <title>{`${label(d.day)}: ${d.happy} happy, ${d.unhappy} unhappy`}</title>
+              <rect x={i * w + w * 0.18} width={w * 0.64} y={40 - hh} height={hh} fill="var(--client)" rx="0.4" />
+              {d.unhappy > 0 && <rect x={i * w + w * 0.18} width={w * 0.64} y={40 - hh - uh} height={uh} fill="var(--color-alert)" rx="0.4" />}
+            </g>
+          );
+        })}
+      </svg>
+      <div className="mt-2 flex justify-between text-xs text-dim">
+        <span>{days[0] && label(days[0].day)}</span>
+        <span className="flex items-center gap-3">
+          <span className="flex items-center gap-1.5"><i className="size-2 rounded-full bg-[var(--client)]" /> Happy</span>
+          <span className="flex items-center gap-1.5"><i className="size-2 rounded-full bg-alert" /> Unhappy</span>
+        </span>
+        <span>Today</span>
+      </div>
+    </>
+  );
+}
+
+function SideList({ v, className }: { v: View; className: string }) {
+  const side = v.hosp ? v.data.birthdays : v.data.recall;
+  return (
+    <div className={className}>
+      <ZoneHead
+        title={v.hosp ? 'Birthdays this month' : 'Recall list'}
+        note={v.hosp ? plural(v.data.birthdays.length, 'guest') : plural(v.stats.customers, 'patient')}
+      />
+      {side.length ? (
+        <Table head={['Name', v.hosp ? 'Birthday' : 'Last visit', ...(v.hosp ? [] : ['Recall due']), 'Phone']}>
+          {side.map((g) => (
+            <tr key={g.id}>
+              <Td>{g.first_name}</Td>
+              <Td>{v.hosp ? birthday(g) : date(g.last_seen_at)}</Td>
+              {!v.hosp && <Td>{date(recallDue(g))}</Td>}
+              <Td className="whitespace-nowrap tabular-nums">{phone(g.phone)}</Td>
+            </tr>
+          ))}
+        </Table>
+      ) : (
+        <p className="text-dim">
+          {v.hosp ? 'No birthdays this month yet. Guests add theirs when they rate you.' : 'No patients yet. They appear after their first rating.'}
+        </p>
+      )}
+    </div>
+  );
+}
+
+function Guests({ v }: { v: View }) {
+  return (
+    <section className={zone}>
+      <ZoneHead title={v.hosp ? 'Guest list' : 'Patient list'} note={`Only ${v.client.name} can see this`} />
+      {v.data.guests.length ? (
+        <div className="-mx-2 overflow-x-auto">
+          <Table wide head={['Name', 'Phone', 'Birthday', 'Rating', 'Visits', 'Feedback', 'Last seen']}>
+            {v.data.guests.map((g) => (
+              <tr key={g.id}>
+                <Td>{[g.first_name, g.last_name].filter(Boolean).join(' ')}</Td>
+                <Td className="whitespace-nowrap tabular-nums">{phone(g.phone)}</Td>
+                <Td>{birthday(g)}</Td>
+                <Td className="whitespace-nowrap text-brand">{stars(g.last_rating)}</Td>
+                <Td className="tabular-nums">{g.visits}</Td>
+                <Td className="max-w-[28ch]">{g.last_feedback}</Td>
+                <Td className="whitespace-nowrap tabular-nums">{date(g.last_seen_at)}</Td>
+              </tr>
+            ))}
+          </Table>
+        </div>
+      ) : (
+        <p className="text-dim">Nothing yet. Scan your QR code and leave a test rating to see it here.</p>
+      )}
+    </section>
   );
 }
 
