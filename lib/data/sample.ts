@@ -1,6 +1,6 @@
 import 'server-only';
 import type { ClientSummary } from '@/lib/auth/dal';
-import type { Alert, DashboardStats, DayCount, Guest } from '@/lib/data/dashboard';
+import type { Alert, DashboardStats, DayCount, Guest, Heat, MonthNumbers, RecentRating, Regular, WinBack } from '@/lib/data/dashboard';
 
 // Made up numbers for demos: what a busy client's dashboard looks like after a few months.
 // Turned on per client by an admin ("Sample data" on /d/{slug}); nothing here touches the database.
@@ -101,7 +101,47 @@ export function sampleDashboard(client: ClientSummary, avgTicket: number) {
     .sort((a, b) => (a.birthday_day ?? 0) - (b.birthday_day ?? 0))
     .map((g) => ({ ...g, last_rating: null, last_feedback: null }));
 
+  const happy30 = daily.reduce((n, d) => n + d.happy, 0);
+  const unhappy30 = daily.reduce((n, d) => n + d.unhappy, 0);
+
+  const monthNumbers = (ratingsN: number, avg: number): MonthNumbers => ({
+    ratings: ratingsN,
+    happy: Math.round(ratingsN * 0.86),
+    avg_rating: avg,
+    new_customers: Math.round(ratingsN * (0.42 + rand() * 0.12)),
+  });
+  const thisMonth = monthNumbers(int(95, 140), Math.round((4.3 + Math.round(rand() * 3) / 10) * 10) / 10);
+  const lastMonth = monthNumbers(int(80, 125), Math.round((4.1 + Math.round(rand() * 3) / 10) * 10) / 10);
+
+  // Weekday x time of day. Bars and restaurants peak Friday and Saturday evenings; dental is weekday daytime.
+  const weights = vertical === 'hospitality'
+    ? [[0, 2, 3, 6, 2], [0, 3, 2, 4, 1], [0, 3, 2, 5, 1], [0, 3, 3, 6, 2], [0, 4, 4, 8, 3], [0, 4, 6, 12, 8], [0, 5, 6, 11, 6]]
+    : [[0, 0, 0, 0, 0], [6, 5, 4, 1, 0], [7, 6, 5, 1, 0], [6, 5, 4, 1, 0], [7, 6, 5, 1, 0], [5, 4, 2, 0, 0], [3, 1, 0, 0, 0]];
+  const heat: Heat = weights.map((row) => row.map((w) => (w ? Math.round(w * (0.7 + rand() * 0.6)) : 0)));
+
+  const recent: RecentRating[] = guests.slice(0, 8).map((g, i) => ({
+    id: `sample-recent-${i}`,
+    first_name: g.first_name,
+    rating: g.last_rating ?? 5,
+    path: (g.last_rating ?? 5) >= 4 ? 'happy' : 'unhappy',
+    created_at: g.last_seen_at,
+  }));
+
+  const regulars: Regular[] = [...guests]
+    .sort((a, b) => b.visits - a.visits || +b.last_seen_at - +a.last_seen_at)
+    .slice(0, 5)
+    .map((g) => ({ id: g.id, first_name: g.first_name, last_name: g.last_name, visits: g.visits, last_seen_at: g.last_seen_at }));
+
+  const winback: WinBack = { d30: int(24, 40), d60: int(14, 26), d90: int(18, 34), textable: 0 };
+  winback.textable = Math.round((winback.d30 + winback.d60 + winback.d90) * 0.78);
+
   return {
+    months: { this: thisMonth, last: lastMonth },
+    funnel: { scans: Math.round((happy30 + unhappy30) * 1.55), ratings: happy30 + unhappy30, happy: happy30, unhappy: unhappy30 },
+    recent,
+    heat,
+    winback,
+    regulars,
     stats: {
       customers: total,
       reviews,

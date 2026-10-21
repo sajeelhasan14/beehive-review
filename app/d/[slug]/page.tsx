@@ -1,5 +1,5 @@
 import { Suspense, type CSSProperties, type ReactNode } from 'react';
-import { getDashboard, type DashboardData, type Guest } from '@/lib/data/dashboard';
+import { HEAT_BLOCKS, getDashboard, type DashboardData, type Guest } from '@/lib/data/dashboard';
 import type { ClientSummary, CurrentUser } from '@/lib/auth/dal';
 import { AppHeader, headerButton as button, inkOn } from '@/app/ui/app-header';
 import { requestUpgrade, resolveAlert } from './actions';
@@ -148,8 +148,13 @@ function Classic({ v }: { v: View }) {
         <Returning v={v} />
       </section>
 
-      <section className="mb-10 grid grid-cols-2 overflow-hidden rounded-2xl border border-border bg-surface sm:grid-cols-3 lg:grid-cols-5">
+      <section className="mb-6 grid grid-cols-2 overflow-hidden rounded-2xl border border-border bg-surface sm:grid-cols-3 lg:grid-cols-5">
         {v.figures.map((f) => <Figure key={f.label} label={f.label} value={f.value} />)}
+      </section>
+
+      <section className="mb-10 grid grid-cols-1 gap-6 lg:grid-cols-2">
+        <Months v={v} className={zone} />
+        <Funnel v={v} className={zone} />
       </section>
 
       <section className="mb-10">
@@ -164,6 +169,17 @@ function Classic({ v }: { v: View }) {
         <SideList v={v} className={zone} />
       </section>
 
+      <section className="mb-6 grid grid-cols-1 gap-6 lg:grid-cols-2">
+        <Recent v={v} className={zone} />
+        <Busiest v={v} className={zone} />
+      </section>
+
+      <section className="mb-6 grid grid-cols-1 gap-6 lg:grid-cols-2">
+        <WinBackList v={v} className={zone} />
+        <Regulars v={v} className={zone} />
+      </section>
+
+      <KitCard v={v} className={`${zone} mb-6`} />
       <Guests v={v} />
     </>
   );
@@ -204,19 +220,21 @@ function Spotlight({ v }: { v: View }) {
             <Trend v={v} />
           </div>
           <Alerts v={v} />
+          <Recent v={v} className={zone} />
           <SideList v={v} className={zone} />
+          <Regulars v={v} className={zone} />
         </div>
         <div className="grid content-start gap-6">
+          <Funnel v={v} className={zone} />
+          <Months v={v} className={zone} />
           <Ratings v={v} className={zone} />
-          <div className={zone}>
-            <ZoneHead title="Unhappy caught" note={`${v.stats.resolved} of ${v.stats.unhappy} handled`} />
-            <p className="figure text-[44px] font-bold leading-none">{v.stats.unhappy}</p>
-            <p className="mt-2 text-[13px] text-dim">Kept off Google and sent to you instead.</p>
-          </div>
+          <Busiest v={v} className={zone} />
+          <WinBackList v={v} className={zone} />
           <div className={zone}>
             <ZoneHead title="Automations" note={`${v.autos.filter((a) => a.on).length} of ${v.autos.length} on`} />
             <Automations v={v} />
           </div>
+          <KitCard v={v} className={zone} />
         </div>
       </div>
 
@@ -264,6 +282,12 @@ function Tiles({ v }: { v: View }) {
         <Ratings v={v} className={tile} />
       </section>
 
+      <section className="mb-4 grid grid-cols-1 gap-4 lg:grid-cols-3">
+        <Months v={v} className={tile} />
+        <Funnel v={v} className={tile} />
+        <WinBackList v={v} className={tile} />
+      </section>
+
       <section className="mb-4 grid grid-cols-1 gap-4 lg:grid-cols-2">
         {v.data.alerts.length > 0 ? <Alerts v={v} /> : (
           <div className={tile}>
@@ -274,11 +298,18 @@ function Tiles({ v }: { v: View }) {
         <SideList v={v} className={tile} />
       </section>
 
+      <section className="mb-4 grid grid-cols-1 gap-4 lg:grid-cols-3">
+        <Recent v={v} className={tile} />
+        <Busiest v={v} className={tile} />
+        <Regulars v={v} className={tile} />
+      </section>
+
       <section className={`${tile} mb-4`}>
         <ZoneHead title="Automations" note={`Tier ${v.client.tier} ${TIERS[v.client.tier]}`} />
         <Automations v={v} columns />
       </section>
 
+      <KitCard v={v} className={`${tile} mb-4`} />
       <Guests v={v} />
     </>
   );
@@ -450,6 +481,235 @@ function Guests({ v }: { v: View }) {
       ) : (
         <p className="text-dim">Nothing yet. Scan your QR code and leave a test rating to see it here.</p>
       )}
+    </section>
+  );
+}
+
+// "+12%" / "-4%" against last month; a plain difference for the average rating.
+function change(now: number, before: number, kind: 'percent' | 'points' = 'percent') {
+  if (kind === 'points') {
+    const d = Math.round((now - before) * 10) / 10;
+    return d === 0 ? { text: 'Same', tone: 'text-dim' } : { text: `${d > 0 ? '+' : ''}${d}`, tone: d > 0 ? 'text-ok' : 'text-alert' };
+  }
+  if (before === 0) return now > 0 ? { text: 'New', tone: 'text-ok' } : { text: '—', tone: 'text-dim' };
+  const pct = Math.round(((now - before) / before) * 100);
+  return pct === 0 ? { text: 'Same', tone: 'text-dim' } : { text: `${pct > 0 ? '+' : ''}${pct}%`, tone: pct > 0 ? 'text-ok' : 'text-alert' };
+}
+
+function ago(d: Date) {
+  const mins = Math.max(1, Math.round((Date.now() - +d) / 60000));
+  if (mins < 60) return `${mins} min ago`;
+  const hours = Math.round(mins / 60);
+  if (hours < 24) return `${hours} hr ago`;
+  const days = Math.round(hours / 24);
+  return days < 30 ? `${days} day${days === 1 ? '' : 's'} ago` : date(d);
+}
+
+function Months({ v, className }: { v: View; className: string }) {
+  const { this: now, last } = v.data.months;
+  const rows: { label: string; a: number | null; b: number | null; kind?: 'points' }[] = [
+    { label: 'Ratings', a: now.ratings, b: last.ratings },
+    { label: 'Sent to Google', a: now.happy, b: last.happy },
+    { label: 'Average rating', a: now.avg_rating, b: last.avg_rating, kind: 'points' },
+    { label: v.hosp ? 'New customers' : 'New patients', a: now.new_customers, b: last.new_customers },
+  ];
+  return (
+    <div className={className}>
+      <ZoneHead title="This month vs last" note={new Date().toLocaleString('en-US', { timeZone: 'America/New_York', month: 'long' })} />
+      <div className="grid grid-cols-[1fr_auto_auto_auto] items-baseline gap-x-4 gap-y-3 whitespace-nowrap text-[13px]">
+        <span />
+        <span className="text-right text-xs text-dim">This</span>
+        <span className="text-right text-xs text-dim">Last</span>
+        <span className="text-right text-xs text-dim">Change</span>
+        {rows.map((r) => {
+          const c = r.a != null && r.b != null ? change(r.a, r.b, r.kind) : { text: '—', tone: 'text-dim' };
+          return (
+            <div key={r.label} className="contents">
+              <span>{r.label}</span>
+              <span className="figure text-right text-[17px] font-bold tabular-nums">{r.a ?? '—'}</span>
+              <span className="text-right tabular-nums text-dim">{r.b ?? '—'}</span>
+              <span className={`text-right text-xs font-medium tabular-nums ${c.tone}`}>{c.text}</span>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+function Funnel({ v, className }: { v: View; className: string }) {
+  const f = v.data.funnel;
+  const top = Math.max(1, f.scans, f.ratings);
+  const steps = [
+    { label: 'Scanned your QR code', n: f.scans, color: 'bg-dim/40' },
+    { label: 'Left a rating', n: f.ratings, color: 'bg-[var(--client)]' },
+    { label: 'Sent to Google', n: f.happy, color: 'bg-ok' },
+    { label: 'Kept private, sent to you', n: f.unhappy, color: 'bg-alert' },
+  ];
+  const rate = f.scans ? Math.min(100, Math.round((f.ratings / f.scans) * 100)) : null;
+  return (
+    <div className={className}>
+      <ZoneHead title="From scan to review" note="Last 30 days" />
+      <div className="grid gap-3.5">
+        {steps.map((st) => (
+          <div key={st.label}>
+            <div className="mb-1.5 flex justify-between text-[13px]">
+              <span>{st.label}</span>
+              <span className="figure font-bold tabular-nums">{st.n}</span>
+            </div>
+            <div className="h-1.5 overflow-hidden rounded-full bg-surface2">
+              <div className={`h-full rounded-full ${st.color}`} style={{ width: `${(st.n / top) * 100}%` }} />
+            </div>
+          </div>
+        ))}
+      </div>
+      <p className="mt-4 text-[13px] text-dim">
+        {rate != null
+          ? `${rate}% of the people who scanned left a rating.`
+          : 'Scans show up here once people start opening your QR page.'}
+      </p>
+    </div>
+  );
+}
+
+function Recent({ v, className }: { v: View; className: string }) {
+  return (
+    <div className={className}>
+      <ZoneHead title="Latest ratings" note="Newest first" />
+      {v.data.recent.length ? (
+        <ul className="divide-y divide-border">
+          {v.data.recent.map((r) => (
+            <li key={r.id} className="flex items-center justify-between gap-3 py-2.5 first:pt-0 last:pb-0 text-[13px]">
+              <span className="min-w-0 truncate">
+                <span className="font-medium">{r.first_name || 'Anonymous'}</span>{' '}
+                <span className="ml-1 text-brand" aria-label={`${r.rating} out of 5`}>{stars(r.rating)}</span>
+              </span>
+              <span className="flex shrink-0 items-center gap-2.5 text-xs text-dim">
+                <span className={`rounded-full px-2 py-0.5 font-medium ${r.path === 'happy' ? 'bg-ok/10 text-ok' : 'bg-alert/10 text-alert'}`}>
+                  {r.path === 'happy' ? 'Google' : 'Manager'}
+                </span>
+                {ago(r.created_at)}
+              </span>
+            </li>
+          ))}
+        </ul>
+      ) : (
+        <p className="text-dim">Nothing yet. Ratings appear here the moment someone scans.</p>
+      )}
+    </div>
+  );
+}
+
+const DAYS = [
+  { dow: 1, label: 'Mon', long: 'Monday' }, { dow: 2, label: 'Tue', long: 'Tuesday' }, { dow: 3, label: 'Wed', long: 'Wednesday' },
+  { dow: 4, label: 'Thu', long: 'Thursday' }, { dow: 5, label: 'Fri', long: 'Friday' }, { dow: 6, label: 'Sat', long: 'Saturday' },
+  { dow: 0, label: 'Sun', long: 'Sunday' },
+];
+
+// When ratings come in: weekday rows, time of day columns, darker = busier.
+function Busiest({ v, className }: { v: View; className: string }) {
+  const heat = v.data.heat;
+  const max = Math.max(...heat.flat());
+  let best = { dow: 0, block: 0, n: 0 };
+  heat.forEach((row, dow) => row.forEach((n, block) => { if (n > best.n) best = { dow, block, n }; }));
+  const bestDay = DAYS.find((d) => d.dow === best.dow)!.long;
+  return (
+    <div className={className}>
+      <ZoneHead title="Busiest times" note="Last 90 days" />
+      {max > 0 ? (
+        <>
+          <div className="grid grid-cols-[34px_repeat(5,1fr)] gap-1 text-[11px]">
+            <span />
+            {['Morn', 'Lunch', 'Aft', 'Eve', 'Late'].map((b) => <span key={b} className="text-center text-dim">{b}</span>)}
+            {DAYS.map((d) => (
+              <div key={d.dow} className="contents">
+                <span className="self-center text-dim">{d.label}</span>
+                {heat[d.dow].map((n, b) => (
+                  <span
+                    key={b}
+                    title={`${d.long} ${HEAT_BLOCKS[b].toLowerCase()}: ${plural(n, 'rating')}`}
+                    className="h-7 rounded-md bg-surface2"
+                    style={n ? { background: `color-mix(in srgb, var(--client) ${Math.max(16, Math.round((n / max) * 100))}%, transparent)` } : undefined}
+                  />
+                ))}
+              </div>
+            ))}
+          </div>
+          <p className="mt-3.5 text-[13px] text-dim">
+            Busiest: <span className="text-text">{bestDay} {HEAT_BLOCKS[best.block].toLowerCase()}</span>.
+          </p>
+        </>
+      ) : (
+        <p className="text-dim">Needs a few ratings first. Then you’ll see which days and times are busiest.</p>
+      )}
+    </div>
+  );
+}
+
+function WinBackList({ v, className }: { v: View; className: string }) {
+  const w = v.data.winback;
+  const gone = w.d30 + w.d60 + w.d90;
+  const bands = [
+    { label: '30 to 60 days', n: w.d30 },
+    { label: '60 to 90 days', n: w.d60 },
+    { label: '90+ days', n: w.d90 },
+  ];
+  return (
+    <div className={className}>
+      <ZoneHead title={v.hosp ? 'Win back list' : 'Lapsed patients'} note={`${gone} not seen in 30+ days`} />
+      <div className="grid grid-cols-3 gap-3">
+        {bands.map((b) => (
+          <div key={b.label} className="border-t border-border pt-3">
+            <div className="figure text-[26px] font-bold leading-none">{b.n}</div>
+            <div className="mt-1.5 text-xs text-dim">{b.label}</div>
+          </div>
+        ))}
+      </div>
+      <p className="mt-4 text-[13px] text-dim">
+        {gone
+          ? `${w.textable} of them agreed to texts, so ${v.client.tier >= 3 ? 'win back texts reach them automatically' : 'they can be reached once win back texts are on'}.`
+          : `Everyone on your list has visited in the last 30 days.`}
+      </p>
+    </div>
+  );
+}
+
+function Regulars({ v, className }: { v: View; className: string }) {
+  return (
+    <div className={className}>
+      <ZoneHead title={v.hosp ? 'Regulars' : 'Most loyal patients'} note="Most visits" />
+      {v.data.regulars.length ? (
+        <ul className="divide-y divide-border">
+          {v.data.regulars.map((g) => (
+            <li key={g.id} className="flex items-center justify-between gap-3 py-2.5 first:pt-0 last:pb-0 text-[13px]">
+              <span className="font-medium">{[g.first_name, g.last_name].filter(Boolean).join(' ') || 'Guest'}</span>
+              <span className="text-xs text-dim">
+                <span className="figure mr-1 text-[15px] font-bold text-text">{g.visits}</span>
+                visits, last {date(g.last_seen_at)}
+              </span>
+            </li>
+          ))}
+        </ul>
+      ) : (
+        <p className="text-dim">No one has come back yet. Repeat guests show up here once they rate a second time.</p>
+      )}
+    </div>
+  );
+}
+
+function KitCard({ v, className }: { v: View; className: string }) {
+  const base = `/d/${v.client.slug}/kit`;
+  return (
+    <section className={className}>
+      <ZoneHead title="Your QR kit" note="Print and put it where people can scan" />
+      <div className="flex flex-wrap items-center gap-2">
+        <a href={`${base}/qr.png`} target="_blank" rel="noreferrer" className={button}>QR code</a>
+        <a href={`${base}/table-tent.pdf`} target="_blank" rel="noreferrer" className={button}>Table tent</a>
+        <a href={`${base}/stickers.pdf`} target="_blank" rel="noreferrer" className={button}>Sticker sheet</a>
+        <span className="text-[13px] text-dim">
+          {v.hosp ? 'Tents on the tables, stickers at the bar and on the check presenters.' : 'Tents at the front desk, stickers on the checkout sheet.'}
+        </span>
+      </div>
     </section>
   );
 }

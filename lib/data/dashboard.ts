@@ -51,6 +51,50 @@ export interface DayCount {
   unhappy: number;
 }
 
+// One month's headline numbers, for the "this month vs last month" panel.
+export interface MonthNumbers {
+  ratings: number;
+  happy: number;
+  avg_rating: number | null;
+  new_customers: number;
+}
+
+// QR scan -> rating -> Google, last 30 days.
+export interface FunnelSteps {
+  scans: number;
+  ratings: number;
+  happy: number;
+  unhappy: number;
+}
+
+export interface RecentRating {
+  id: string;
+  first_name: string | null;
+  rating: number;
+  path: 'happy' | 'unhappy';
+  created_at: Date;
+}
+
+export interface Regular {
+  id: string;
+  first_name: string | null;
+  last_name: string | null;
+  visits: number;
+  last_seen_at: Date;
+}
+
+// People who haven't been back: gone 30 to 59, 60 to 89 and 90+ days, and how many of them agreed to texts.
+export interface WinBack {
+  d30: number;
+  d60: number;
+  d90: number;
+  textable: number;
+}
+
+// Ratings by weekday (0 = Sunday) and time of day: Morning 5-11, Lunch 11-3, Afternoon 3-6, Evening 6-10, Late 10-5.
+export const HEAT_BLOCKS = ['Morning', 'Lunch', 'Afternoon', 'Evening', 'Late'] as const;
+export type Heat = number[][]; // [weekday 0..6][block 0..4]
+
 export async function getDashboard(slug: string) {
   const { user, client } = await requireClientAccess(slug);
   const id = client.id;
@@ -62,7 +106,7 @@ export async function getDashboard(slug: string) {
   }
   if (!client.dashboard_enabled) return { user, client, data: null };
 
-  const [stats, money, guests, alerts, birthdays, daily] = await Promise.all([
+  const [stats, money, guests, alerts, birthdays, daily, months, funnel, recent, heat, winback, regulars] = await Promise.all([
     db().query<Omit<DashboardStats, 'ratings' | 'returning_this_month'> & { r5: number; r4: number; r3: number; r2: number; r1: number }>(
       `select (select count(*) from contacts where client_id = $1)::int as customers,
               count(*) filter (where path = 'happy')::int as reviews,
@@ -124,7 +168,65 @@ export async function getDashboard(slug: string) {
         group by d order by d`,
       [id, TZ],
     ),
+    // This month vs last month (New York calendar months).
+    db().query<{ t_ratings: number; t_happy: number; t_avg: number | null; t_new: number; l_ratings: number; l_happy: number; l_avg: number | null; l_new: number }>(
+      `with b as (
+         select (date_trunc('month', now() at time zone $2) at time zone $2) as m0,
+                ((date_trunc('month', now() at time zone $2) - interval '1 month') at time zone $2) as m1
+       )
+       select count(s.id) filter (where s.created_at >= b.m0)::int as t_ratings,
+              count(s.id) filter (where s.created_at >= b.m0 and s.path = 'happy')::int as t_happy,
+              round(avg(s.rating) filter (where s.created_at >= b.m0), 1)::float8 as t_avg,
+              (select count(*) from contacts c where c.client_id = $1 and c.first_seen_at >= b.m0)::int as t_new,
+              count(s.id) filter (where s.created_at < b.m0)::int as l_ratings,
+              count(s.id) filter (where s.created_at < b.m0 and s.path = 'happy')::int as l_happy,
+              round(avg(s.rating) filter (where s.created_at < b.m0), 1)::float8 as l_avg,
+              (select count(*) from contacts c where c.client_id = $1 and c.first_seen_at >= b.m1 and c.first_seen_at < b.m0)::int as l_new
+         from b left join submissions s on s.client_id = $1 and s.created_at >= b.m1
+        group by b.m0, b.m1`,
+      [id, TZ],
+    ),
+    db().query<FunnelSteps>(
+      `select (select count(*) from funnel_scans where client_id = $1 and created_at > now() - interval '30 days')::int as scans,
+              count(*)::int as ratings,
+              count(*) filter (where path = 'happy')::int as happy,
+              count(*) filter (where path = 'unhappy')::int as unhappy
+         from submissions where client_id = $1 and created_at > now() - interval '30 days'`,
+      [id],
+    ),
+    db().query<RecentRating>(
+      `select id, first_name, rating, path, created_at from submissions
+        where client_id = $1 order by created_at desc limit 8`,
+      [id],
+    ),
+    db().query<{ dow: number; block: number; n: number }>(
+      `select dow, block, count(*)::int as n from (
+         select extract(dow from created_at at time zone $2)::int as dow,
+                case when h >= 5 and h < 11 then 0 when h >= 11 and h < 15 then 1 when h >= 15 and h < 18 then 2
+                     when h >= 18 and h < 22 then 3 else 4 end as block
+           from (select created_at, extract(hour from created_at at time zone $2)::int as h
+                   from submissions where client_id = $1 and created_at > now() - interval '90 days') x
+       ) y group by dow, block`,
+      [id, TZ],
+    ),
+    db().query<WinBack>(
+      `select count(*) filter (where last_seen_at <= now() - interval '30 days' and last_seen_at > now() - interval '60 days')::int as d30,
+              count(*) filter (where last_seen_at <= now() - interval '60 days' and last_seen_at > now() - interval '90 days')::int as d60,
+              count(*) filter (where last_seen_at <= now() - interval '90 days')::int as d90,
+              count(*) filter (where last_seen_at <= now() - interval '30 days' and sms_consent and sms_opted_out_at is null)::int as textable
+         from contacts where client_id = $1`,
+      [id],
+    ),
+    db().query<Regular>(
+      `select id, first_name, last_name, visits, last_seen_at from contacts
+        where client_id = $1 and visits > 1 order by visits desc, last_seen_at desc limit 5`,
+      [id],
+    ),
   ]);
+
+  const heatGrid: Heat = Array.from({ length: 7 }, () => [0, 0, 0, 0, 0]);
+  for (const r of heat.rows) heatGrid[r.dow][r.block] = r.n;
+  const m = months.rows[0];
 
   const s = stats.rows[0];
   const returning = money.rows[0].returning;
@@ -151,6 +253,15 @@ export async function getDashboard(slug: string) {
       // Dental recall: patients whose last visit is longest ago come first (6 month recall).
       recall: [...guests.rows].sort((a, b) => +a.last_seen_at - +b.last_seen_at).slice(0, 8),
       daily: daily.rows,
+      months: {
+        this: { ratings: m.t_ratings, happy: m.t_happy, avg_rating: m.t_avg, new_customers: m.t_new },
+        last: { ratings: m.l_ratings, happy: m.l_happy, avg_rating: m.l_avg, new_customers: m.l_new },
+      } satisfies { this: MonthNumbers; last: MonthNumbers },
+      funnel: funnel.rows[0],
+      recent: recent.rows,
+      heat: heatGrid,
+      winback: winback.rows[0],
+      regulars: regulars.rows,
       sample: false,
     },
   };
